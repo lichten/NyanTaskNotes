@@ -1,0 +1,7 @@
+dist/
+js/
+node_modules/
+*.log
+*.sqlite
+*.db
+
