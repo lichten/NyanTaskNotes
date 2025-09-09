@@ -34,7 +34,8 @@ function createMenu(): void {
     {
       label: 'メニュー',
       submenu: [
-        { label: 'Top', click: () => mainWindow?.loadFile('index.html') }
+        { label: 'Top', click: () => mainWindow?.loadFile('index.html') },
+        { label: 'タスク編集', click: () => mainWindow?.loadFile('task-editor.html') }
       ]
     }
   ];
@@ -109,6 +110,7 @@ app.whenReady().then(async () => {
 
   registerIpcHandlers({
     fileDb: () => fileDb,
+    taskDb: () => taskDb,
     store,
     getMainWindow
   });

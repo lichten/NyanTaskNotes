@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data:;" />
+    <title>タスク編集 - NyanTaskNotes</title>
+    <style>
+      body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+      header { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid #ddd; }
+      main { display: grid; grid-template-columns: 320px 1fr; height: calc(100vh - 52px); }
+      #left { border-right: 1px solid #eee; display: flex; flex-direction: column; }
+      #search { padding: 8px; border: none; border-bottom: 1px solid #eee; }
+      #taskList { overflow: auto; }
+      .item { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
+      .item.active { background: #eef6ff; }
+      .meta { color: #666; font-size: 12px; margin-top: 2px; }
+      #right { padding: 16px; overflow: auto; }
+      .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+      label { width: 110px; color: #333; }
+      input[type=text], input[type=date], input[type=time], select, textarea { flex: 1; padding: 6px 8px; }
+      textarea { min-height: 80px; }
+      .actions { display: flex; gap: 8px; margin-top: 16px; }
+      button { padding: 8px 12px; }
+      h3 { margin-top: 20px; }
+      .small { color: #666; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>タスク編集</div>
+      <div class="actions">
+        <button id="newBtn">新規</button>
+        <button id="saveBtn">保存</button>
+        <button id="deleteBtn">削除</button>
+      </div>
+    </header>
+    <main>
+      <section id="left">
+        <input id="search" type="text" placeholder="検索 (タイトル/説明)" />
+        <div id="taskList"></div>
+      </section>
+      <section id="right">
+        <form id="taskForm" onsubmit="return false;">
+          <input type="hidden" id="taskId" />
+          <div class="row"><label for="title">タイトル</label><input id="title" type="text" required /></div>
+          <div class="row"><label for="description">説明</label><textarea id="description"></textarea></div>
+          <div class="row">
+            <label for="status">ステータス</label>
+            <select id="status">
+              <option value="todo">todo</option>
+              <option value="doing">doing</option>
+              <option value="done">done</option>
+              <option value="archived">archived</option>
+            </select>
+          </div>
+          <div class="row"><label for="priority">優先度</label><input id="priority" type="text" placeholder="例: 1..5" /></div>
+          <div class="row"><label for="dueAt">期日</label><input id="dueAt" type="date" /></div>
+
+          <h3>繰り返し</h3>
+          <div class="row"><label for="isRecurring">繰り返し</label><select id="isRecurring"><option value="0">オフ</option><option value="1">オン</option></select></div>
+          <div class="row"><label for="startDate">開始日</label><input id="startDate" type="date" /></div>
+          <div class="row"><label for="startTime">開始時刻</label><input id="startTime" type="time" /></div>
+          <div class="small">繰り返しルールの詳細（第N曜日など）は後続で追加予定です。</div>
+        </form>
+      </section>
+    </main>
+    <script src="js/taskEditor.js"></script>
+  </body>
+  </html>
+

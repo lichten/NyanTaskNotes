@@ -14,6 +14,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getFileInfoBySha256: (sha256: string) => ipcRenderer.invoke('get-file-info-by-sha256', sha256),
   showFileBySha256: (sha256: string) => ipcRenderer.invoke('show-file-by-sha256', sha256),
   removeTagsFromFile: (sha256: string, tags: string[]) => ipcRenderer.invoke('remove-tags-from-file', sha256, tags)
+  ,
+  // Tasks
+  listTasks: (params?: any) => ipcRenderer.invoke('tasks:list', params || {}),
+  getTask: (id: number) => ipcRenderer.invoke('tasks:get', id),
+  createTask: (payload: any) => ipcRenderer.invoke('tasks:create', payload),
+  updateTask: (id: number, payload: any) => ipcRenderer.invoke('tasks:update', id, payload),
+  deleteTask: (id: number) => ipcRenderer.invoke('tasks:delete', id)
 });
 
 declare global {
@@ -27,7 +34,11 @@ declare global {
       getFileInfoBySha256: (sha256: string) => Promise<any>;
       showFileBySha256: (sha256: string) => Promise<{ success: boolean; filePath?: string; message?: string }>;
       removeTagsFromFile: (sha256: string, tags: string[]) => Promise<{ success: boolean; removed?: number; message?: string }>;
+      listTasks: (params?: any) => Promise<any[]>;
+      getTask: (id: number) => Promise<any>;
+      createTask: (payload: any) => Promise<{ success: boolean; id?: number }>;
+      updateTask: (id: number, payload: any) => Promise<{ success: boolean }>;
+      deleteTask: (id: number) => Promise<{ success: boolean }>;
     };
   }
 }
-
