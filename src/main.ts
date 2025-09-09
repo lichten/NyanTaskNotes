@@ -4,6 +4,7 @@ import log from 'electron-log';
 import Store from 'electron-store';
 import { FileDatabase } from './fileDatabase';
 import { registerIpcHandlers } from './ipc';
+import { TaskDatabase } from './taskDatabase';
 
 log.transports.file.level = 'info';
 log.transports.console.level = 'debug';
@@ -12,11 +13,13 @@ log.transports.file.maxSize = 5 * 1024 * 1024;
 const store = new Store({
   defaults: {
     windowState: { isMaximized: false, width: 900, height: 640, x: undefined as any, y: undefined as any },
-    fileDbPath: ''
+    fileDbPath: '',
+    taskDbPath: ''
   }
 });
 
 let fileDb: FileDatabase | null = null;
+let taskDb: TaskDatabase | null = null;
 let mainWindow: BrowserWindow | null = null;
 
 function saveWindowState(): void {
@@ -31,7 +34,8 @@ function createMenu(): void {
     {
       label: 'メニュー',
       submenu: [
-        { label: 'Top', click: () => mainWindow?.loadFile('index.html') }
+        { label: 'Top', click: () => mainWindow?.loadFile('index.html') },
+        { label: 'タスク編集', click: () => mainWindow?.loadFile('task-editor.html') }
       ]
     }
   ];
@@ -70,6 +74,23 @@ function getMainWindow(): BrowserWindow | null { return mainWindow; }
 app.whenReady().then(async () => {
   try {
     const settings = store.store as any;
+
+    // タスクDB（アプリ固有）は既定パスを用意して初期化
+    try {
+      let taskDbPath: string = settings.taskDbPath;
+      if (!taskDbPath) {
+        taskDbPath = path.join(app.getPath('userData'), 'tasks.sqlite3');
+        store.set({ ...settings, taskDbPath });
+      }
+      taskDb = new TaskDatabase(taskDbPath);
+      await taskDb.init();
+      log.info('Task DB initialized:', taskDbPath);
+    } catch (e) {
+      log.error('Failed to init task DB:', e);
+      taskDb = null;
+    }
+
+    // ファイルDB（外部ファイル管理）は任意設定
     const fileDbPath = settings.fileDbPath;
     if (fileDbPath) {
       fileDb = new FileDatabase(fileDbPath);
@@ -79,7 +100,7 @@ app.whenReady().then(async () => {
       log.info('File DB path not set yet.');
     }
   } catch (e) {
-    log.error('Failed to init file DB:', e);
+    log.error('Failed to init databases:', e);
     fileDb = null;
   }
 
@@ -89,6 +110,7 @@ app.whenReady().then(async () => {
 
   registerIpcHandlers({
     fileDb: () => fileDb,
+    taskDb: () => taskDb,
     store,
     getMainWindow
   });
@@ -99,6 +121,9 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', async () => {
   saveWindowState();
+  if (taskDb) {
+    try { await taskDb.close(); } catch { /* noop */ }
+  }
   if (fileDb) {
     try { await fileDb.close(); } catch { /* noop */ }
   }
@@ -111,4 +136,3 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
-
