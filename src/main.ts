@@ -35,6 +35,7 @@ function createMenu(): void {
       label: 'メニュー',
       submenu: [
         { label: 'Top', click: () => mainWindow?.loadFile('index.html') },
+        { label: 'タスク表示', click: () => mainWindow?.loadFile('task-view.html') },
         { label: 'タスク編集', click: () => mainWindow?.loadFile('task-editor.html') }
       ]
     }

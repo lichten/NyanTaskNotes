@@ -60,11 +60,12 @@
           <div class="row"><label for="isRecurring">繰り返し</label><select id="isRecurring"><option value="0">オフ</option><option value="1">オン</option></select></div>
           <div class="row"><label for="startDate">開始日</label><input id="startDate" type="date" /></div>
           <div class="row"><label for="startTime">開始時刻</label><input id="startTime" type="time" /></div>
-          <div class="small">繰り返しルールの詳細（第N曜日など）は後続で追加予定です。</div>
+          <div class="row"><label for="monthlyDay">毎月の開始日</label><input id="monthlyDay" type="number" min="1" max="31" placeholder="1..31" /></div>
+          <div class="row"><label for="recurrenceCount">繰り返し回数</label><input id="recurrenceCount" type="number" min="0" placeholder="0=無限, 1.." /></div>
+          <div class="small">「繰り返し=オン」で「毎月の開始日」を指定すると、毎月その日に開始するタスクとして保存します（第N曜日などは後続で追加予定）。</div>
         </form>
       </section>
     </main>
-    <script src="js/taskEditor.js"></script>
+    <script type="module" src="js/taskEditor.js"></script>
   </body>
   </html>
-

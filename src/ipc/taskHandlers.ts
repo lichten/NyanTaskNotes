@@ -67,5 +67,28 @@ export function registerTaskIpcHandlers(opts: {
       throw e;
     }
   });
-}
 
+  // Occurrences
+  ipcMain.handle('occ:list', async (_event, params: { from?: string; to?: string; query?: string; status?: string } = {}) => {
+    const db = getTaskDb();
+    if (!db) return [];
+    try {
+      return await (db as any).listOccurrences(params);
+    } catch (e) {
+      log.error('occ:list error', e);
+      throw e;
+    }
+  });
+
+  ipcMain.handle('occ:complete', async (_event, id: number) => {
+    const db = getTaskDb();
+    if (!db) return { success: false };
+    try {
+      await (db as any).completeOccurrence(id);
+      return { success: true };
+    } catch (e) {
+      log.error('occ:complete error', e);
+      throw e;
+    }
+  });
+}
