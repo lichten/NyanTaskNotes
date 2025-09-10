@@ -21,6 +21,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createTask: (payload: any) => ipcRenderer.invoke('tasks:create', payload),
   updateTask: (id: number, payload: any) => ipcRenderer.invoke('tasks:update', id, payload),
   deleteTask: (id: number) => ipcRenderer.invoke('tasks:delete', id)
+  ,
+  // Occurrences
+  listOccurrences: (params?: any) => ipcRenderer.invoke('occ:list', params || {}),
+  completeOccurrence: (id: number) => ipcRenderer.invoke('occ:complete', id)
 });
 
 declare global {
@@ -39,6 +43,8 @@ declare global {
       createTask: (payload: any) => Promise<{ success: boolean; id?: number }>;
       updateTask: (id: number, payload: any) => Promise<{ success: boolean }>;
       deleteTask: (id: number) => Promise<{ success: boolean }>;
+      listOccurrences: (params?: any) => Promise<any[]>;
+      completeOccurrence: (id: number) => Promise<{ success: boolean }>;
     };
   }
 }

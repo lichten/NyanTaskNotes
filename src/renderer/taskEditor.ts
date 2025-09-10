@@ -1,3 +1,5 @@
+export {};
+
 type Task = {
   ID?: number;
   TITLE: string;
@@ -8,12 +10,30 @@ type Task = {
   START_DATE?: string | null;
   START_TIME?: string | null;
   IS_RECURRING?: number;
+  // Recurrence rule (joined)
+  FREQ?: string | null;
+  MONTHLY_DAY?: number | null;
+  COUNT?: number | null;
 };
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 let tasks: Task[] = [];
 let selectedId: number | null = null;
+function updateMonthlyDayState() {
+  const isRec = (el<HTMLSelectElement>('isRecurring').value === '1');
+  const md = document.getElementById('monthlyDay') as HTMLInputElement | null;
+  const rc = document.getElementById('recurrenceCount') as HTMLInputElement | null;
+  if (md) {
+    md.disabled = !isRec;
+    md.placeholder = isRec ? '1..31' : '繰り返しオンで編集可';
+  }
+  if (rc) {
+    rc.disabled = !isRec;
+    if (!isRec) rc.value = '1'; // 単発タスクは1固定
+    if (isRec && !rc.value) rc.value = '0'; // デフォルト0=無限
+  }
+}
 
 function formatDateInput(dateStr?: string | null): string {
   if (!dateStr) return '';
@@ -50,10 +70,22 @@ function clearForm() {
   el<HTMLInputElement>('priority').value = '';
   el<HTMLInputElement>('dueAt').value = '';
   el<HTMLSelectElement>('isRecurring').value = '0';
-  el<HTMLInputElement>('startDate').value = '';
-  el<HTMLInputElement>('startTime').value = '';
+  // 仕様: 開始日/開始時刻のデフォルトを本日/00:00に設定
+  (() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const da = String(d.getDate()).padStart(2, '0');
+    el<HTMLInputElement>('startDate').value = `${y}-${m}-${da}`;
+  })();
+  el<HTMLInputElement>('startTime').value = '00:00';
+  const md = el<HTMLInputElement>('monthlyDay');
+  if (md) md.value = '';
+  const rc = el<HTMLInputElement>('recurrenceCount');
+  if (rc) rc.value = '1';
   selectedId = null;
   renderListSelection();
+  updateMonthlyDayState();
 }
 
 function renderListSelection() {
@@ -75,7 +107,12 @@ async function selectTask(id: number) {
   el<HTMLSelectElement>('isRecurring').value = String(t.IS_RECURRING ? 1 : 0);
   el<HTMLInputElement>('startDate').value = formatDateInput(t.START_DATE);
   el<HTMLInputElement>('startTime').value = t.START_TIME || '';
+  const md = el<HTMLInputElement>('monthlyDay');
+  if (md) md.value = t.MONTHLY_DAY ? String(t.MONTHLY_DAY) : '';
+  const rc = el<HTMLInputElement>('recurrenceCount');
+  if (rc) rc.value = String((t.IS_RECURRING ? (t.COUNT ?? 0) : 1));
   renderListSelection();
+  updateMonthlyDayState();
 }
 
 async function onSave() {
@@ -87,7 +124,18 @@ async function onSave() {
     dueAt: el<HTMLInputElement>('dueAt').value || null,
     isRecurring: el<HTMLSelectElement>('isRecurring').value === '1',
     startDate: el<HTMLInputElement>('startDate').value || null,
-    startTime: el<HTMLInputElement>('startTime').value || null
+    startTime: el<HTMLInputElement>('startTime').value || null,
+    // Recurrence rule (monthly day-of-month)
+    recurrence: (() => {
+      const isRec = el<HTMLSelectElement>('isRecurring').value === '1';
+      const mdStr = (document.getElementById('monthlyDay') as HTMLInputElement | null)?.value || '';
+      const md = mdStr ? Number(mdStr) : null;
+      if (!isRec || !md || isNaN(md) || md < 1 || md > 31) return null;
+      const rcStr = (document.getElementById('recurrenceCount') as HTMLInputElement | null)?.value || '';
+      let count = rcStr ? Number(rcStr) : 0;
+      if (isNaN(count) || count < 0) count = 0; // 0=無限
+      return { freq: 'monthly', monthlyDay: md, count } as any;
+    })()
   };
   const idStr = el<HTMLInputElement>('taskId').value;
   if (idStr) {
@@ -120,6 +168,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   el<HTMLButtonElement>('newBtn').addEventListener('click', () => clearForm());
   el<HTMLButtonElement>('saveBtn').addEventListener('click', onSave);
   el<HTMLButtonElement>('deleteBtn').addEventListener('click', onDelete);
+  el<HTMLSelectElement>('isRecurring').addEventListener('change', updateMonthlyDayState);
+  updateMonthlyDayState();
   await loadTasks('');
 });
-
