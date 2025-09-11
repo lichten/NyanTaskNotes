@@ -60,14 +60,13 @@ async function loadTasks(): Promise<void> {
   const params: any = {};
   if (query) params.query = query;
   if (occStatus) params.status = occStatus;
-  // Default range: first day of this month to last day of next month
-  const now = new Date();
-  const y = now.getFullYear();
-  const m0 = now.getMonth();
-  const from = new Date(y, m0, 1);
-  const to = new Date(y, m0 + 2, 0);
-  params.from = formatDateInput(from.toISOString());
-  params.to = formatDateInput(to.toISOString());
+  // 範囲: 明日〜24か月後
+  const today = new Date();
+  const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+  const to = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  to.setMonth(to.getMonth() + 24);
+  params.from = ymd(tomorrow);
+  params.to = ymd(to);
 
   const occs = await window.electronAPI.listOccurrences(params);
   const list = el<HTMLDivElement>('taskList');
@@ -76,37 +75,94 @@ async function loadTasks(): Promise<void> {
     list.innerHTML = '<div style="color:#666;">該当するオカレンスはありません。</div>';
     return;
   }
-  occs.forEach((o: any) => {
-    const div = document.createElement('div');
-    div.className = 'task' + (o.OCC_STATUS === 'done' ? ' done' : '');
-    const left = document.createElement('div');
-    const meta = `予定日: ${formatDateInput(o.SCHEDULED_DATE)} ・ タスク: ${o.TASK_ID} ・ 状態: ${o.OCC_STATUS}`;
-    left.innerHTML = `<div class="title">${o.TITLE || '(無題)'}</div>` +
-      `<div class="meta">${meta}</div>`;
-    const actions = document.createElement('div');
-    actions.className = 'actions';
-    const btn = document.createElement('button');
-    if (o.OCCURRENCE_ID) {
-      if (o.OCC_STATUS !== 'done') {
-        btn.textContent = '完了にする';
-        btn.onclick = async () => {
-          await window.electronAPI.completeOccurrence(o.OCCURRENCE_ID);
-          await loadTasks();
-        };
+
+  const endOfWeek = (() => {
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const dow = d.getDay(); // 0=Sun..6=Sat
+    const daysToSunday = (7 - dow) % 7;
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate() + daysToSunday);
+  })();
+  const plusDays = (base: Date, n: number) => new Date(base.getFullYear(), base.getMonth(), base.getDate() + n);
+  const plusMonths = (base: Date, n: number) => new Date(base.getFullYear(), base.getMonth() + n, base.getDate());
+  const sameMonth = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
+  const sameYear = (a: Date, b: Date) => a.getFullYear() === b.getFullYear();
+
+  type Bucket = { key: string; label: string; order: number };
+  const buckets: Bucket[] = [
+    { key: 'tomorrow', label: '明日', order: 1 },
+    { key: 'byWeekend', label: '週末まで', order: 2 },
+    { key: 'within7', label: '7日以内', order: 3 },
+    { key: 'thisMonth', label: '今月中', order: 4 },
+    { key: 'within31', label: '31日以内', order: 5 },
+    { key: 'thisYear', label: '今年中', order: 6 },
+    { key: 'within12m', label: '12か月以内', order: 7 },
+    { key: 'gt12m', label: '1年以上あと', order: 8 }
+  ];
+  const groups = new Map<string, any[]>();
+  buckets.forEach(b => groups.set(b.key, []));
+  const toDate = (s: string) => {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      const [yy, mm, dd] = s.split('-').map(Number);
+      return new Date(yy, mm - 1, dd);
+    }
+    const d = new Date(s);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  };
+  for (const o of occs) {
+    const d = toDate(o.SCHEDULED_DATE);
+    if (d < tomorrow) continue;
+    let key: string;
+    if (d.getTime() === tomorrow.getTime()) key = 'tomorrow';
+    else if (d <= endOfWeek) key = 'byWeekend';
+    else if (d <= plusDays(today, 7)) key = 'within7';
+    else if (sameMonth(d, today)) key = 'thisMonth';
+    else if (d <= plusDays(today, 31)) key = 'within31';
+    else if (sameYear(d, today)) key = 'thisYear';
+    else if (d <= plusMonths(today, 12)) key = 'within12m';
+    else key = 'gt12m';
+    groups.get(key)!.push(o);
+  }
+
+  for (const b of buckets) {
+    const items = groups.get(b.key)!;
+    if (!items.length) continue;
+    const h = document.createElement('div');
+    h.style.margin = '12px 0 6px';
+    h.style.fontWeight = '600';
+    h.textContent = `${b.label} (${items.length})`;
+    list.appendChild(h);
+    items.sort((a, b) => (a.SCHEDULED_DATE as string).localeCompare(b.SCHEDULED_DATE as string) || (a.SCHEDULED_TIME || '').localeCompare(b.SCHEDULED_TIME || ''));
+    items.forEach((o: any) => {
+      const div = document.createElement('div');
+      div.className = 'task' + (o.OCC_STATUS === 'done' ? ' done' : '');
+      const left = document.createElement('div');
+      const meta = `予定日: ${formatDateInput(o.SCHEDULED_DATE)} ・ タスク: ${o.TASK_ID} ・ 状態: ${o.OCC_STATUS}`;
+      left.innerHTML = `<div class="title">${o.TITLE || '(無題)'}</div>` +
+        `<div class="meta">${meta}</div>`;
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      const btn = document.createElement('button');
+      if (o.OCCURRENCE_ID) {
+        if (o.OCC_STATUS !== 'done') {
+          btn.textContent = '完了にする';
+          btn.onclick = async () => {
+            await window.electronAPI.completeOccurrence(o.OCCURRENCE_ID);
+            await loadTasks();
+          };
+        } else {
+          btn.textContent = '完了済み';
+          btn.disabled = true;
+        }
       } else {
-        btn.textContent = '完了済み';
+        btn.textContent = (o.TASK_STATUS === 'done') ? '完了済み' : '単発タスク';
         btn.disabled = true;
       }
-    } else {
-      // 非繰り返し（単発）タスク表示用: 完了操作は編集画面から行う
-      btn.textContent = (o.TASK_STATUS === 'done') ? '完了済み' : '単発タスク';
-      btn.disabled = true;
-    }
-    actions.appendChild(btn);
-    div.appendChild(left);
-    div.appendChild(actions);
-    list.appendChild(div);
-  });
+      actions.appendChild(btn);
+      div.appendChild(left);
+      div.appendChild(actions);
+      list.appendChild(div);
+    });
+  }
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
