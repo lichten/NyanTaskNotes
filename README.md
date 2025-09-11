@@ -2,7 +2,7 @@
 
 オフライン動作のタスク管理アプリ（Electron + TypeScript）。
 
-- タスクDB（アプリ固有）: `app.getPath('userData')/tasks.sqlite3` に自動作成
+- タスクDB（アプリ固有）: 既定は `app.getPath('userData')/tasks.sqlite3`（トップ画面から任意のSQLiteファイルを指定可能）
 - ファイルDB（外部ファイル管理）: 既存スキーマ（`db/file_schema.sql`）で任意のSQLiteファイルを指定
 
 ## セットアップ手順
