@@ -4,6 +4,8 @@ async function loadSettings() {
   const s = await window.electronAPI.getSettings();
   const filedb = byId<HTMLInputElement>('filedb');
   filedb.value = s.fileDbPath || '';
+  const taskdb = document.getElementById('taskdb') as HTMLInputElement | null;
+  if (taskdb) taskdb.value = s.taskDbPath || '';
 }
 
 function parseTags(input: string): string[] {
@@ -20,9 +22,33 @@ async function onBrowseDb() {
   }
 }
 
+async function onBrowseTaskDb() {
+  const api: any = (window as any).electronAPI;
+  const res: any = await api.showFileDialog({
+    title: 'タスクDBのSQLiteファイルを選択',
+    properties: ['openFile', 'createDirectory'],
+    filters: [
+      { name: 'SQLite Database', extensions: ['sqlite', 'db', 'sqlite3'] },
+      { name: 'All Files', extensions: ['*'] }
+    ]
+  });
+  const el = document.getElementById('taskdb') as HTMLInputElement | null;
+  if (!el) return;
+  if (!res.canceled && res.filePaths && res.filePaths.length > 0) el.value = res.filePaths[0];
+}
+
 async function onSaveDb() {
   const path = byId<HTMLInputElement>('filedb').value.trim();
   const { success } = await window.electronAPI.saveSettings({ fileDbPath: path });
+  const status = byId<HTMLDivElement>('status');
+  status.textContent = success ? '保存しました。アプリを再起動するとDBが初期化されます。' : '保存に失敗しました';
+}
+
+async function onSaveTaskDb() {
+  const el = document.getElementById('taskdb') as HTMLInputElement | null;
+  if (!el) return;
+  const path = el.value.trim();
+  const { success } = await window.electronAPI.saveSettings({ taskDbPath: path });
   const status = byId<HTMLDivElement>('status');
   status.textContent = success ? '保存しました。アプリを再起動するとDBが初期化されます。' : '保存に失敗しました';
 }
@@ -42,7 +68,10 @@ async function onAddFiles() {
 window.addEventListener('DOMContentLoaded', () => {
   byId<HTMLButtonElement>('browseDb').addEventListener('click', onBrowseDb);
   byId<HTMLButtonElement>('saveDb').addEventListener('click', onSaveDb);
+  const b1 = document.getElementById('browseTaskDb');
+  if (b1) b1.addEventListener('click', onBrowseTaskDb);
+  const b2 = document.getElementById('saveTaskDb');
+  if (b2) b2.addEventListener('click', onSaveTaskDb);
   byId<HTMLButtonElement>('addFiles').addEventListener('click', onAddFiles);
   loadSettings();
 });
-

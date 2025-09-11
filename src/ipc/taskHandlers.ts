@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from 'electron';
+import { app, dialog, ipcMain, BrowserWindow } from 'electron';
 import log from 'electron-log';
 import type Store from 'electron-store';
 import type { TaskDatabase } from '../taskDatabase';
@@ -9,6 +9,28 @@ export function registerTaskIpcHandlers(opts: {
   getMainWindow: () => BrowserWindow | null;
 }): void {
   const getTaskDb = opts.taskDb;
+  const { getMainWindow } = opts;
+
+  // Select task DB path (similar to file DB)
+  ipcMain.handle('select-task-db-path', async () => {
+    const mainWindow = getMainWindow();
+    const options: Electron.OpenDialogOptions = {
+      title: 'タスクDBのSQLiteファイルを選択',
+      defaultPath: app.getPath('userData'),
+      properties: ['openFile', 'createDirectory'],
+      filters: [
+        { name: 'SQLite Database', extensions: ['sqlite', 'db', 'sqlite3'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || result.filePaths.length === 0) {
+      return { filePath: null, canceled: true };
+    }
+    return { filePath: result.filePaths[0], canceled: false };
+  });
 
   ipcMain.handle('tasks:list', async (_event, params: { query?: string; status?: string } = {}) => {
     const db = getTaskDb();
