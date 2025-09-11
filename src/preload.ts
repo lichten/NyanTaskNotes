@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (settings: any) => ipcRenderer.invoke('save-settings', settings),
   selectFileDbPath: () => ipcRenderer.invoke('select-file-db-path'),
+  selectTaskDbPath: () => ipcRenderer.invoke('select-task-db-path'),
 
   // File dialog
   showFileDialog: (options: any) => ipcRenderer.invoke('show-file-dialog', options),
@@ -25,6 +26,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Occurrences
   listOccurrences: (params?: any) => ipcRenderer.invoke('occ:list', params || {}),
   completeOccurrence: (id: number) => ipcRenderer.invoke('occ:complete', id)
+  ,
+  // Task tags
+  listTaskTags: () => ipcRenderer.invoke('task-tags:list')
 });
 
 declare global {
@@ -33,6 +37,7 @@ declare global {
       getSettings: () => Promise<any>;
       saveSettings: (settings: any) => Promise<{ success: boolean }>;
       selectFileDbPath: () => Promise<{ filePath: string | null; canceled: boolean }>;
+      selectTaskDbPath: () => Promise<{ filePath: string | null; canceled: boolean }>;
       showFileDialog: (options: any) => Promise<any>;
       addFilesToFileDb: (tagNames: string[]) => Promise<{ success: boolean; added?: number; skipped?: number; total?: number; message?: string }>;
       getFileInfoBySha256: (sha256: string) => Promise<any>;
@@ -45,6 +50,7 @@ declare global {
       deleteTask: (id: number) => Promise<{ success: boolean }>;
       listOccurrences: (params?: any) => Promise<any[]>;
       completeOccurrence: (id: number) => Promise<{ success: boolean }>;
+      listTaskTags: () => Promise<string[]>;
     };
   }
 }

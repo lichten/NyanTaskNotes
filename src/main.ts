@@ -62,6 +62,8 @@ function createWindow(): void {
   mainWindow.once('ready-to-show', () => {
     if (windowState.isMaximized) mainWindow!.maximize();
     mainWindow!.show();
+    // Open DevTools on startup
+    try { mainWindow!.webContents.openDevTools({ mode: 'detach' }); } catch { /* noop */ }
   });
   mainWindow.on('maximize', saveWindowState);
   mainWindow.on('unmaximize', saveWindowState);
