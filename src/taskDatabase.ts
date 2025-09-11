@@ -78,10 +78,10 @@ export class TaskDatabase {
     const startYear = now.getFullYear();
     const startMonth0 = now.getMonth();
     const tasks = await this.all<any>(
-      `SELECT T.ID AS TASK_ID, T.START_DATE, T.START_TIME, T.STATUS, R.MONTHLY_DAY, R.COUNT
+      `SELECT T.ID AS TASK_ID, T.START_DATE, T.START_TIME, R.MONTHLY_DAY, R.COUNT
        FROM TASKS T
        JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID AND R.FREQ = 'monthly'
-       WHERE T.IS_RECURRING = 1 AND (T.STATUS IS NULL OR T.STATUS != 'archived')`
+       WHERE T.IS_RECURRING = 1`
     );
     for (const t of tasks) {
       const monthlyDay = Number(t.MONTHLY_DAY);
@@ -151,7 +151,7 @@ export class TaskDatabase {
       `SELECT T.ID AS TASK_ID, T.START_DATE, T.START_TIME, R.COUNT
        FROM TASKS T
        JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID AND R.FREQ = 'daily'
-       WHERE T.IS_RECURRING = 1 AND (T.STATUS IS NULL OR T.STATUS != 'archived')`
+       WHERE T.IS_RECURRING = 1`
     );
     for (const t of tasks) {
       const count = Number(t.COUNT || 0);
@@ -266,7 +266,7 @@ export class TaskDatabase {
     const tasks = await this.all<any>(
       `SELECT T.ID AS TASK_ID, DATE(COALESCE(T.DUE_AT, T.START_DATE)) AS S_DATE, T.START_TIME
        FROM TASKS T
-       WHERE T.IS_RECURRING = 0 AND (T.STATUS IS NULL OR T.STATUS != 'archived')
+       WHERE T.IS_RECURRING = 0
          AND DATE(COALESCE(T.DUE_AT, T.START_DATE)) IS NOT NULL`
     );
     const nowIso = this.nowIso();
@@ -306,7 +306,7 @@ export class TaskDatabase {
     if (params.status) { where.push('O.STATUS = ?'); binds.push(params.status); }
     if (params.query) { where.push('(T.TITLE LIKE ? OR T.DESCRIPTION LIKE ?)'); binds.push(`%${params.query}%`, `%${params.query}%`); }
     const sql = `SELECT O.ID AS OCCURRENCE_ID, O.SCHEDULED_DATE, O.SCHEDULED_TIME, O.STATUS AS OCC_STATUS, O.COMPLETED_AT,
-                        T.ID AS TASK_ID, T.TITLE, T.DESCRIPTION, T.STATUS AS TASK_STATUS, T.PRIORITY,
+                        T.ID AS TASK_ID, T.TITLE, T.DESCRIPTION,
                         T.START_DATE, T.START_TIME, T.IS_RECURRING,
                         R.FREQ, R.MONTHLY_DAY, R.COUNT
                  FROM TASK_OCCURRENCES O
@@ -373,19 +373,22 @@ export class TaskDatabase {
 
   private nowIso(): string { return new Date().toISOString(); }
 
-  async listTasks(params: { query?: string; status?: string } = {}): Promise<any[]> {
+  async listTasks(params: { query?: string } = {}): Promise<any[]> {
     const where: string[] = [];
     const binds: any[] = [];
     if (params.query) { where.push('(TITLE LIKE ? OR DESCRIPTION LIKE ?)'); binds.push(`%${params.query}%`, `%${params.query}%`); }
-    if (params.status) { where.push('STATUS = ?'); binds.push(params.status); }
-    const sql = `SELECT T.ID, T.TITLE, T.DESCRIPTION, T.STATUS, T.PRIORITY, T.DUE_AT, T.START_DATE, T.START_TIME, T.IS_RECURRING,
+    const sql = `SELECT T.ID, T.TITLE, T.DESCRIPTION, T.DUE_AT, T.START_DATE, T.START_TIME, T.IS_RECURRING,
                         T.CREATED_AT, T.UPDATED_AT,
                         R.FREQ, R.MONTHLY_DAY, R.COUNT
                  FROM TASKS T
                  LEFT JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID
                  ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
                  ORDER BY COALESCE(T.UPDATED_AT, T.CREATED_AT) DESC, T.ID DESC`;
-    return this.all<any>(sql, binds);
+    const rows = await this.all<any>(sql, binds);
+    for (const r of rows) {
+      r.TAGS = await this.getTagsForTask(r.ID);
+    }
+    return rows;
   }
 
   async getTask(id: number): Promise<any | undefined> {
@@ -393,7 +396,47 @@ export class TaskDatabase {
                  FROM TASKS T
                  LEFT JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID
                  WHERE T.ID = ?`;
-    return this.get<any>(sql, [id]);
+    const row = await this.get<any>(sql, [id]);
+    if (row) row.TAGS = await this.getTagsForTask(row.ID);
+    return row;
+  }
+
+  private async upsertTagNames(names: string[]): Promise<number[]> {
+    const now = this.nowIso();
+    const ids: number[] = [];
+    for (const raw of names || []) {
+      const name = String(raw || '').trim();
+      if (!name) continue;
+      const existed = await this.get<any>('SELECT ID FROM TAG_INFOS WHERE NAME = ?', [name]);
+      if (existed && existed.ID) {
+        ids.push(existed.ID);
+      } else {
+        const id = await this.run('INSERT INTO TAG_INFOS (NAME, CREATED_AT, UPDATED_AT) VALUES (?, ?, ?)', [name, now, now]);
+        ids.push(id);
+      }
+    }
+    return ids;
+  }
+
+  private async setTagsForTask(taskId: number, names: string[]): Promise<void> {
+    const now = this.nowIso();
+    const tagIds = await this.upsertTagNames(names || []);
+    const existing = await this.all<any>('SELECT TAG_ID FROM TASK_TAGS WHERE TASK_ID = ?', [taskId]);
+    const existingSet = new Set<number>(existing.map(e => Number(e.TAG_ID)));
+    const nextSet = new Set<number>(tagIds);
+    // Delete removed
+    for (const tid of existingSet) {
+      if (!nextSet.has(tid)) await this.run('DELETE FROM TASK_TAGS WHERE TASK_ID = ? AND TAG_ID = ?', [taskId, tid]);
+    }
+    // Add new
+    for (const tid of nextSet) {
+      if (!existingSet.has(tid)) await this.run('INSERT OR IGNORE INTO TASK_TAGS (TASK_ID, TAG_ID, CREATED_AT, UPDATED_AT) VALUES (?, ?, ?, ?)', [taskId, tid, now, now]);
+    }
+  }
+
+  private async getTagsForTask(taskId: number): Promise<string[]> {
+    const rows = await this.all<any>(`SELECT I.NAME FROM TASK_TAGS M JOIN TAG_INFOS I ON I.ID = M.TAG_ID WHERE M.TASK_ID = ? ORDER BY I.NAME`, [taskId]);
+    return rows.map(r => r.NAME as string);
   }
 
   async createTask(payload: any): Promise<number> {
@@ -401,8 +444,6 @@ export class TaskDatabase {
     const p = {
       title: payload.title || '',
       description: payload.description || null,
-      status: payload.status || 'todo',
-      priority: payload.priority ?? null,
       due_at: payload.dueAt || null,
       start_date: payload.startDate || null,
       start_time: payload.startTime || null,
@@ -419,9 +460,9 @@ export class TaskDatabase {
     if (!p.start_time) {
       p.start_time = '00:00';
     }
-    const sql = `INSERT INTO TASKS (TITLE, DESCRIPTION, STATUS, PRIORITY, DUE_AT, START_DATE, START_TIME, IS_RECURRING, CREATED_AT, UPDATED_AT)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-    const id = await this.run(sql, [p.title, p.description, p.status, p.priority, p.due_at, p.start_date, p.start_time, p.is_recurring, now, now]);
+    const sql = `INSERT INTO TASKS (TITLE, DESCRIPTION, DUE_AT, START_DATE, START_TIME, IS_RECURRING, CREATED_AT, UPDATED_AT)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+    const id = await this.run(sql, [p.title, p.description, p.due_at, p.start_date, p.start_time, p.is_recurring, now, now]);
     // Insert recurrence rule: for recurring, from payload; for single, COUNT=1
     const rec = payload.recurrence;
     if (p.is_recurring && rec && rec.freq === 'monthly' && rec.monthlyDay && rec.monthlyDay >= 1 && rec.monthlyDay <= 31) {
@@ -461,23 +502,25 @@ export class TaskDatabase {
         await this.reconcileOccurrencesForTask(id);
       }
     }
+    // Tags
+    if (Array.isArray(payload.tags)) {
+      await this.setTagsForTask(id, payload.tags.map((s: any) => String(s || '').trim()).filter(Boolean));
+    }
     return id;
   }
 
   async updateTask(id: number, payload: any): Promise<void> {
     const now = this.nowIso();
-    const sql = `UPDATE TASKS SET TITLE = ?, DESCRIPTION = ?, STATUS = ?, PRIORITY = ?, DUE_AT = ?, START_DATE = ?, START_TIME = ?, IS_RECURRING = ?, UPDATED_AT = ? WHERE ID = ?`;
+    const sql = `UPDATE TASKS SET TITLE = ?, DESCRIPTION = ?, DUE_AT = ?, START_DATE = ?, START_TIME = ?, IS_RECURRING = ?, UPDATED_AT = ? WHERE ID = ?`;
     const p = {
       title: payload.title || '',
       description: payload.description || null,
-      status: payload.status || 'todo',
-      priority: payload.priority ?? null,
       due_at: payload.dueAt || null,
       start_date: payload.startDate || null,
       start_time: payload.startTime || null,
       is_recurring: payload.isRecurring ? 1 : 0
     };
-    await this.run(sql, [p.title, p.description, p.status, p.priority, p.due_at, p.start_date, p.start_time, p.is_recurring, now, id]);
+    await this.run(sql, [p.title, p.description, p.due_at, p.start_date, p.start_time, p.is_recurring, now, id]);
     // Upsert/delete recurrence rule based on payload
     const rec = payload.recurrence;
     if (p.is_recurring && rec && rec.freq === 'monthly' && rec.monthlyDay && rec.monthlyDay >= 1 && rec.monthlyDay <= 31) {
@@ -528,6 +571,11 @@ export class TaskDatabase {
     // If recurring with finite count, reconcile occurrences
     if (p.is_recurring && rec && typeof rec.count !== 'undefined' && Number(rec.count) >= 1) {
       await this.reconcileOccurrencesForTask(id);
+    }
+
+    // Tags
+    if (Array.isArray(payload.tags)) {
+      await this.setTagsForTask(id, payload.tags.map((s: any) => String(s || '').trim()).filter(Boolean));
     }
   }
 

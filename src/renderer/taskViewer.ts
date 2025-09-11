@@ -4,8 +4,7 @@ type Task = {
   ID?: number;
   TITLE: string;
   DESCRIPTION?: string | null;
-  STATUS: 'todo' | 'doing' | 'done' | 'archived';
-  PRIORITY?: number | null;
+  // status/priority removed in new schema
   DUE_AT?: string | null;
   START_DATE?: string | null;
   START_TIME?: string | null;
@@ -172,7 +171,7 @@ async function loadTasks(): Promise<void> {
           btn.disabled = true;
         }
       } else {
-        btn.textContent = (o.TASK_STATUS === 'done') ? '完了済み' : '単発タスク';
+        btn.textContent = '単発タスク';
         btn.disabled = true;
       }
       actions.appendChild(btn);

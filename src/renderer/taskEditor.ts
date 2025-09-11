@@ -4,8 +4,7 @@ type Task = {
   ID?: number;
   TITLE: string;
   DESCRIPTION?: string | null;
-  STATUS: string;
-  PRIORITY?: number | null;
+  TAGS?: string[];
   DUE_AT?: string | null;
   START_DATE?: string | null;
   START_TIME?: string | null;
@@ -74,8 +73,13 @@ async function loadTasks(query = '') {
     const div = document.createElement('div');
     div.className = 'item' + (t.ID === selectedId ? ' active' : '');
     div.dataset.id = String(t.ID);
+    const tags = (t.TAGS || []).slice(0, 3).join(', ');
+    const parts: string[] = [];
+    if (tags) parts.push(`タグ: ${tags}`);
+    if (t.DUE_AT) parts.push(`期日: ${formatDateInput(t.DUE_AT)}`);
+    if (t.IS_RECURRING) parts.push('繰り返し');
     div.innerHTML = `<div>${t.TITLE || '(無題)'}</div>` +
-      `<div class="meta">${t.STATUS}${t.DUE_AT ? ' ・ 期日: ' + formatDateInput(t.DUE_AT) : ''}${t.IS_RECURRING ? ' ・ 繰り返し' : ''}</div>`;
+      `<div class=\"meta\">${parts.join(' ・ ')}</div>`;
     div.onclick = () => selectTask(t.ID!);
     list.appendChild(div);
   });
@@ -85,8 +89,8 @@ function clearForm() {
   el<HTMLInputElement>('taskId').value = '';
   el<HTMLInputElement>('title').value = '';
   el<HTMLTextAreaElement>('description').value = '';
-  el<HTMLSelectElement>('status').value = 'todo';
-  el<HTMLInputElement>('priority').value = '';
+  const tagEl = document.getElementById('tags') as HTMLInputElement | null;
+  if (tagEl) tagEl.value = '';
   el<HTMLInputElement>('dueAt').value = '';
   el<HTMLSelectElement>('isRecurring').value = 'once';
   // 仕様: 開始日/開始時刻のデフォルトを本日/00:00に設定
@@ -120,8 +124,8 @@ async function selectTask(id: number) {
   el<HTMLInputElement>('taskId').value = String(t.ID || '');
   el<HTMLInputElement>('title').value = t.TITLE || '';
   el<HTMLTextAreaElement>('description').value = (t.DESCRIPTION as any) || '';
-  el<HTMLSelectElement>('status').value = t.STATUS || 'todo';
-  el<HTMLInputElement>('priority').value = (t.PRIORITY ?? '').toString();
+  const tagEl2 = document.getElementById('tags') as HTMLInputElement | null;
+  if (tagEl2) tagEl2.value = (t.TAGS || []).join(', ');
   el<HTMLInputElement>('dueAt').value = formatDateInput(t.DUE_AT);
   // Map DB values to UI mode
   el<HTMLSelectElement>('isRecurring').value = ((): string => {
@@ -151,8 +155,10 @@ async function onSave() {
   const payload = {
     title: el<HTMLInputElement>('title').value.trim(),
     description: el<HTMLTextAreaElement>('description').value.trim() || null,
-    status: el<HTMLSelectElement>('status').value,
-    priority: el<HTMLInputElement>('priority').value ? Number(el<HTMLInputElement>('priority').value) : null,
+    tags: (() => {
+      const v = (document.getElementById('tags') as HTMLInputElement | null)?.value || '';
+      return v.split(',').map(s => s.trim()).filter(Boolean);
+    })(),
     dueAt: el<HTMLInputElement>('dueAt').value || null,
     isRecurring: mode !== 'once',
     startDate: startDateInput || null,
