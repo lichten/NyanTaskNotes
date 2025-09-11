@@ -44,7 +44,15 @@
           <input type="hidden" id="taskId" />
           <div class="row"><label for="title">タイトル</label><input id="title" type="text" required /></div>
           <div class="row"><label for="description">説明</label><textarea id="description"></textarea></div>
-          <div class="row"><label for="tags">タグ</label><input id="tags" type="text" placeholder="例: work, urgent" /></div>
+          <div class="row">
+            <label for="tags">タグ</label>
+            <div style="flex:1; display:flex; gap:8px; align-items:center; position:relative;">
+              <div id="tagChips" class="tags" style="flex:1; min-height: 28px;"></div>
+              <button id="openTagPicker" type="button">選択</button>
+              <input id="tags" type="text" style="display:none;" />
+            </div>
+          </div>
+          <div id="tagPicker" style="display:none; position:fixed; z-index:1000; background:#fff; border:1px solid #ddd; border-radius:6px; box-shadow:0 2px 10px rgba(0,0,0,.15); padding:10px; min-width:240px; max-height:300px; overflow:auto;"></div>
           <div class="row"><label for="dueAt">期日</label><input id="dueAt" type="date" /></div>
 
           <h3>繰り返し</h3>

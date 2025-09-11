@@ -113,4 +113,16 @@ export function registerTaskIpcHandlers(opts: {
       throw e;
     }
   });
+
+  // Task tag helpers
+  ipcMain.handle('task-tags:list', async () => {
+    const db = getTaskDb();
+    if (!db) return [];
+    try {
+      return await (db as any).listAllTags();
+    } catch (e) {
+      log.error('task-tags:list error', e);
+      throw e;
+    }
+  });
 }

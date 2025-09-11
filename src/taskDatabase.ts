@@ -439,6 +439,11 @@ export class TaskDatabase {
     return rows.map(r => r.NAME as string);
   }
 
+  async listAllTags(): Promise<string[]> {
+    const rows = await this.all<any>(`SELECT NAME FROM TAG_INFOS ORDER BY NAME ASC`);
+    return rows.map(r => r.NAME as string);
+  }
+
   async createTask(payload: any): Promise<number> {
     const now = this.nowIso();
     const p = {
