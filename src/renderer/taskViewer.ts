@@ -60,12 +60,13 @@ async function loadTasks(): Promise<void> {
   const params: any = {};
   if (query) params.query = query;
   if (occStatus) params.status = occStatus;
-  // 範囲: 明日〜24か月後
+  // 範囲: 過去12か月〜24か月後（上部に「今日まで」を表示するため過去も取得）
   const today = new Date();
+  const oneYearAgo = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 365);
   const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
   const to = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   to.setMonth(to.getMonth() + 24);
-  params.from = ymd(tomorrow);
+  params.from = ymd(oneYearAgo);
   params.to = ymd(to);
 
   const occs = await window.electronAPI.listOccurrences(params);
@@ -89,6 +90,7 @@ async function loadTasks(): Promise<void> {
 
   type Bucket = { key: string; label: string; order: number };
   const buckets: Bucket[] = [
+    { key: 'pastOrToday', label: '今日まで', order: 0 },
     { key: 'tomorrow', label: '明日', order: 1 },
     { key: 'byWeekend', label: '週末まで', order: 2 },
     { key: 'within7', label: '7日以内', order: 3 },
@@ -110,9 +112,9 @@ async function loadTasks(): Promise<void> {
   };
   for (const o of occs) {
     const d = toDate(o.SCHEDULED_DATE);
-    if (d < tomorrow) continue;
     let key: string;
-    if (d.getTime() === tomorrow.getTime()) key = 'tomorrow';
+    if (d <= today) key = 'pastOrToday';
+    else if (d.getTime() === tomorrow.getTime()) key = 'tomorrow';
     else if (d <= endOfWeek) key = 'byWeekend';
     else if (d <= plusDays(today, 7)) key = 'within7';
     else if (sameMonth(d, today)) key = 'thisMonth';
