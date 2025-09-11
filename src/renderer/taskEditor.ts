@@ -21,17 +21,28 @@ const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as
 let tasks: Task[] = [];
 let selectedId: number | null = null;
 function updateMonthlyDayState() {
-  const isRec = (el<HTMLSelectElement>('isRecurring').value === '1');
+  const mode = el<HTMLSelectElement>('isRecurring').value; // once | daily | monthly
   const md = document.getElementById('monthlyDay') as HTMLInputElement | null;
   const rc = document.getElementById('recurrenceCount') as HTMLInputElement | null;
   if (md) {
-    md.disabled = !isRec;
-    md.placeholder = isRec ? '1..31' : '繰り返しオンで編集可';
+    const monthly = mode === 'monthly';
+    md.disabled = !monthly;
+    md.placeholder = monthly ? '1..31' : '「毎月」で編集可';
   }
   if (rc) {
-    rc.disabled = !isRec;
-    if (!isRec) rc.value = '1'; // 単発タスクは1固定
-    if (isRec && !rc.value) rc.value = '0'; // デフォルト0=無限
+    const recurring = mode !== 'once';
+    rc.disabled = !recurring;
+    if (!recurring) rc.value = '1'; // 単発タスクは1固定
+    if (mode === 'daily') rc.value = '0'; // 毎日は0=無限を強制セット
+    if (recurring && !rc.value) rc.value = '0'; // デフォルト0=無限
+  }
+  // 「毎日」選択時は開始日に現在日を強制設定
+  if (mode === 'daily') {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const da = String(d.getDate()).padStart(2, '0');
+    el<HTMLInputElement>('startDate').value = `${y}-${m}-${da}`;
   }
 }
 
@@ -69,7 +80,7 @@ function clearForm() {
   el<HTMLSelectElement>('status').value = 'todo';
   el<HTMLInputElement>('priority').value = '';
   el<HTMLInputElement>('dueAt').value = '';
-  el<HTMLSelectElement>('isRecurring').value = '0';
+  el<HTMLSelectElement>('isRecurring').value = 'once';
   // 仕様: 開始日/開始時刻のデフォルトを本日/00:00に設定
   (() => {
     const d = new Date();
@@ -104,7 +115,13 @@ async function selectTask(id: number) {
   el<HTMLSelectElement>('status').value = t.STATUS || 'todo';
   el<HTMLInputElement>('priority').value = (t.PRIORITY ?? '').toString();
   el<HTMLInputElement>('dueAt').value = formatDateInput(t.DUE_AT);
-  el<HTMLSelectElement>('isRecurring').value = String(t.IS_RECURRING ? 1 : 0);
+  // Map DB values to UI mode
+  el<HTMLSelectElement>('isRecurring').value = ((): string => {
+    if (!t.IS_RECURRING) return 'once';
+    if (t.FREQ === 'monthly') return 'monthly';
+    if (t.FREQ === 'daily') return 'daily';
+    return 'daily';
+  })();
   el<HTMLInputElement>('startDate').value = formatDateInput(t.START_DATE);
   el<HTMLInputElement>('startTime').value = t.START_TIME || '';
   const md = el<HTMLInputElement>('monthlyDay');
@@ -116,27 +133,47 @@ async function selectTask(id: number) {
 }
 
 async function onSave() {
+  const mode = el<HTMLSelectElement>('isRecurring').value; // once | daily | monthly
+  const startDateInput = el<HTMLInputElement>('startDate').value || '';
+  if (mode === 'daily' && !startDateInput) {
+    alert('開始日は必須です（毎日）。開始日を入力してください。');
+    return;
+  }
+
   const payload = {
     title: el<HTMLInputElement>('title').value.trim(),
     description: el<HTMLTextAreaElement>('description').value.trim() || null,
     status: el<HTMLSelectElement>('status').value,
     priority: el<HTMLInputElement>('priority').value ? Number(el<HTMLInputElement>('priority').value) : null,
     dueAt: el<HTMLInputElement>('dueAt').value || null,
-    isRecurring: el<HTMLSelectElement>('isRecurring').value === '1',
-    startDate: el<HTMLInputElement>('startDate').value || null,
+    isRecurring: mode !== 'once',
+    startDate: startDateInput || null,
     startTime: el<HTMLInputElement>('startTime').value || null,
     // Recurrence rule (monthly day-of-month)
     recurrence: (() => {
-      const isRec = el<HTMLSelectElement>('isRecurring').value === '1';
-      const mdStr = (document.getElementById('monthlyDay') as HTMLInputElement | null)?.value || '';
-      const md = mdStr ? Number(mdStr) : null;
-      if (!isRec || !md || isNaN(md) || md < 1 || md > 31) return null;
       const rcStr = (document.getElementById('recurrenceCount') as HTMLInputElement | null)?.value || '';
       let count = rcStr ? Number(rcStr) : 0;
       if (isNaN(count) || count < 0) count = 0; // 0=無限
-      return { freq: 'monthly', monthlyDay: md, count } as any;
+      if (mode === 'daily') {
+        return { freq: 'daily', count } as any;
+      }
+      if (mode === 'monthly') {
+        const mdStr = (document.getElementById('monthlyDay') as HTMLInputElement | null)?.value || '';
+        const md = mdStr ? Number(mdStr) : null;
+        if (!md || isNaN(md) || md < 1 || md > 31) return null;
+        return { freq: 'monthly', monthlyDay: md, count } as any;
+      }
+      return null;
     })()
   };
+  // Safety: if recurrence is invalid, treat as non-recurring
+  if (!payload.recurrence) payload.isRecurring = false;
+  // 確認ダイアログ: 繰り返し回数が1以上なら予定再生成の確認
+  const finiteCount = !!(payload.isRecurring && payload.recurrence && typeof (payload.recurrence as any).count === 'number' && (payload.recurrence as any).count >= 1);
+  if (finiteCount) {
+    const ok = confirm('繰り返し回数が1以上に設定されています。回数に合わせて予定（TASK_OCCURRENCES）を再生成します。よろしいですか？');
+    if (!ok) return;
+  }
   const idStr = el<HTMLInputElement>('taskId').value;
   if (idStr) {
     await window.electronAPI.updateTask(Number(idStr), payload);
