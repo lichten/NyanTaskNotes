@@ -251,6 +251,26 @@ window.addEventListener('DOMContentLoaded', async () => {
   // タグピッカー
   const openBtn = document.getElementById('openTagPicker');
   openBtn?.addEventListener('click', (ev) => openTagPicker(ev as MouseEvent));
+
+  // インライン追加
+  const addInput = document.getElementById('addTagInput') as HTMLInputElement | null;
+  const addBtn = document.getElementById('addTagBtn') as HTMLButtonElement | null;
+  const doAdd = () => {
+    const v = (addInput?.value || '').trim();
+    if (!v) return;
+    if (!selectedTags.includes(v)) selectedTags.push(v);
+    if (!allTagNames.includes(v)) allTagNames.push(v);
+    selectedTags = Array.from(new Set(selectedTags)).sort((a,b)=>a.localeCompare(b));
+    renderTagChips();
+    if (addInput) addInput.value = '';
+  };
+  addBtn?.addEventListener('click', doAdd);
+  addInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      doAdd();
+    }
+  });
 });
 
 function renderTagChips() {

@@ -46,8 +46,10 @@
           <div class="row"><label for="description">説明</label><textarea id="description"></textarea></div>
           <div class="row">
             <label for="tags">タグ</label>
-            <div style="flex:1; display:flex; gap:8px; align-items:center; position:relative;">
+            <div style="flex:1; display:flex; gap:8px; align-items:center; position:relative; flex-wrap: wrap;">
               <div id="tagChips" class="tags" style="flex:1; min-height: 28px;"></div>
+              <input id="addTagInput" type="text" placeholder="タグを追加" style="width: 160px;" />
+              <button id="addTagBtn" type="button">追加</button>
               <button id="openTagPicker" type="button">選択</button>
               <input id="tags" type="text" style="display:none;" />
             </div>
