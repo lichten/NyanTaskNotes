@@ -248,9 +248,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       if (!isNaN(id)) await selectTask(id);
     }
   } catch {}
-  // タグピッカー
-  const openBtn = document.getElementById('openTagPicker');
-  openBtn?.addEventListener('click', (ev) => openTagPicker(ev as MouseEvent));
+  // 選択ボタンは廃止。全タグは常時チップ表示でON/OFF可能。
 
   // インライン追加
   const addInput = document.getElementById('addTagInput') as HTMLInputElement | null;
@@ -279,21 +277,37 @@ function renderTagChips() {
   wrap.innerHTML = '';
   const hidden = document.getElementById('tags') as HTMLInputElement | null;
   if (hidden) hidden.value = selectedTags.join(', ');
-  if (!selectedTags.length) {
+  const set = new Set<string>([...allTagNames, ...selectedTags]);
+  const names = Array.from(set).sort((a,b)=>a.localeCompare(b));
+  if (!names.length) {
     const span = document.createElement('span');
     span.style.color = '#777';
-    span.textContent = '（未選択）';
+    span.textContent = '（タグはまだありません。上の入力で追加できます）';
     wrap.appendChild(span);
-    return;
   }
-  selectedTags.forEach(name => {
+  names.forEach(name => {
     const chip = document.createElement('span');
     chip.textContent = name;
-    chip.style.background = '#f0f0f0';
     chip.style.border = '1px solid #ddd';
     chip.style.borderRadius = '12px';
-    chip.style.padding = '2px 8px';
+    chip.style.padding = '4px 10px';
     chip.style.fontSize = '12px';
+    chip.style.cursor = 'pointer';
+    chip.style.userSelect = 'none';
+    const setStyle = () => {
+      const on = selectedTags.includes(name);
+      chip.style.background = on ? '#eef6ff' : '#f8f8f8';
+      chip.style.borderColor = on ? '#99c5ff' : '#ddd';
+      chip.style.color = on ? '#0b61d8' : '#333';
+    };
+    setStyle();
+    chip.onclick = () => {
+      if (selectedTags.includes(name)) selectedTags = selectedTags.filter(t => t !== name);
+      else selectedTags.push(name);
+      selectedTags = Array.from(new Set(selectedTags)).sort((a,b)=>a.localeCompare(b));
+      if (hidden) hidden.value = selectedTags.join(', ');
+      setStyle();
+    };
     wrap.appendChild(chip);
   });
 }
