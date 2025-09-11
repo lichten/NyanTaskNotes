@@ -231,4 +231,13 @@ window.addEventListener('DOMContentLoaded', async () => {
   el<HTMLSelectElement>('isRecurring').addEventListener('change', updateMonthlyDayState);
   updateMonthlyDayState();
   await loadTasks('');
+  // クエリに id があれば選択
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const idStr = params.get('id');
+    if (idStr) {
+      const id = Number(idStr);
+      if (!isNaN(id)) await selectTask(id);
+    }
+  } catch {}
 });

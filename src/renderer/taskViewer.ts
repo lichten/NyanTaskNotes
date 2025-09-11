@@ -138,9 +138,25 @@ async function loadTasks(): Promise<void> {
       const div = document.createElement('div');
       div.className = 'task' + (o.OCC_STATUS === 'done' ? ' done' : '');
       const left = document.createElement('div');
-      const meta = `予定日: ${formatDateInput(o.SCHEDULED_DATE)} ・ タスク: ${o.TASK_ID} ・ 状態: ${o.OCC_STATUS}`;
-      left.innerHTML = `<div class="title">${o.TITLE || '(無題)'}</div>` +
-        `<div class="meta">${meta}</div>`;
+      // タイトル + 編集アイコン
+      const titleRow = document.createElement('div');
+      titleRow.className = 'title';
+      const titleSpan = document.createElement('span');
+      titleSpan.textContent = o.TITLE || '(無題)';
+      const editBtn = document.createElement('span');
+      editBtn.textContent = '✎';
+      editBtn.title = '編集';
+      editBtn.style.cursor = 'pointer';
+      editBtn.style.marginLeft = '8px';
+      editBtn.style.fontSize = '12px';
+      editBtn.onclick = () => { window.location.href = `task-editor.html?id=${o.TASK_ID}`; };
+      titleRow.appendChild(titleSpan);
+      titleRow.appendChild(editBtn);
+      left.appendChild(titleRow);
+      const metaRow = document.createElement('div');
+      metaRow.className = 'meta';
+      metaRow.textContent = `予定日: ${formatDateInput(o.SCHEDULED_DATE)} ・ タスク: ${o.TASK_ID} ・ 状態: ${o.OCC_STATUS}`;
+      left.appendChild(metaRow);
       const actions = document.createElement('div');
       actions.className = 'actions';
       const btn = document.createElement('button');
