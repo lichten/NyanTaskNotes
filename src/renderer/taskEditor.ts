@@ -298,68 +298,54 @@ function renderTagChips() {
   });
 }
 
-function openTagPicker(ev: MouseEvent) {
+async function openTagPicker(ev: MouseEvent) {
   const panel = document.getElementById('tagPicker');
   if (!panel) return;
   const btn = ev.currentTarget as HTMLElement;
   const rect = btn.getBoundingClientRect();
   panel.style.left = `${Math.max(8, rect.left)}px`;
   panel.style.top = `${rect.bottom + 6}px`;
-  const set = new Set<string>([...allTagNames, ...selectedTags]);
-  const names = Array.from(set).sort((a,b)=>a.localeCompare(b));
+  try { allTagNames = await (window as any).electronAPI.listTaskTags(); } catch {}
+  const names = Array.from(new Set(allTagNames)).sort((a,b)=>a.localeCompare(b));
   const container = document.createElement('div');
-  const addRow = document.createElement('div');
-  addRow.style.display = 'flex';
-  addRow.style.gap = '6px';
-  addRow.style.marginBottom = '8px';
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.placeholder = 'タグを追加';
-  input.style.flex = '1';
-  const addBtn = document.createElement('button');
-  addBtn.type = 'button';
-  addBtn.textContent = '追加';
-  addBtn.onclick = () => {
-    const v = (input.value || '').trim();
-    if (!v) return;
-    if (!names.includes(v)) names.push(v);
-    names.sort((a,b)=>a.localeCompare(b));
-    buildList();
-    input.value = '';
-  };
-  addRow.appendChild(input);
-  addRow.appendChild(addBtn);
-  container.appendChild(addRow);
 
-  const listDiv = document.createElement('div');
-  container.appendChild(listDiv);
+  const grid = document.createElement('div');
+  grid.style.display = 'flex';
+  grid.style.flexWrap = 'wrap';
+  grid.style.gap = '6px';
+  grid.style.maxWidth = '420px';
 
-  function buildList() {
-    listDiv.innerHTML = '';
-    names.forEach(n => {
-      const row = document.createElement('label');
-      row.style.display = 'flex';
-      row.style.alignItems = 'center';
-      row.style.gap = '6px';
-      row.style.margin = '4px 0';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.checked = selectedTags.includes(n);
-      cb.onchange = () => {
-        if (cb.checked) {
-          if (!selectedTags.includes(n)) selectedTags.push(n);
-        } else {
-          selectedTags = selectedTags.filter(x => x !== n);
-        }
-      };
-      const span = document.createElement('span');
-      span.textContent = n;
-      row.appendChild(cb);
-      row.appendChild(span);
-      listDiv.appendChild(row);
-    });
+  function makeChip(name: string): HTMLSpanElement {
+    const chip = document.createElement('span');
+    chip.textContent = name;
+    chip.style.cursor = 'pointer';
+    chip.style.userSelect = 'none';
+    chip.style.border = '1px solid #ddd';
+    chip.style.borderRadius = '12px';
+    chip.style.padding = '4px 10px';
+    chip.style.fontSize = '12px';
+    const setStyle = () => {
+      const on = selectedTags.includes(name);
+      chip.style.background = on ? '#eef6ff' : '#f8f8f8';
+      chip.style.borderColor = on ? '#99c5ff' : '#ddd';
+      chip.style.color = on ? '#0b61d8' : '#333';
+    };
+    setStyle();
+    chip.onclick = () => {
+      if (selectedTags.includes(name)) {
+        selectedTags = selectedTags.filter(t => t !== name);
+      } else {
+        selectedTags.push(name);
+      }
+      selectedTags = Array.from(new Set(selectedTags)).sort((a,b)=>a.localeCompare(b));
+      setStyle();
+      renderTagChips();
+    };
+    return chip;
   }
-  buildList();
+
+  names.forEach(n => grid.appendChild(makeChip(n)));
+  container.appendChild(grid);
 
   const actions = document.createElement('div');
   actions.style.display = 'flex';
@@ -370,16 +356,7 @@ function openTagPicker(ev: MouseEvent) {
   closeBtn.type = 'button';
   closeBtn.textContent = '閉じる';
   closeBtn.onclick = () => { panel.style.display = 'none'; };
-  const applyBtn = document.createElement('button');
-  applyBtn.type = 'button';
-  applyBtn.textContent = '適用';
-  applyBtn.onclick = () => {
-    selectedTags = Array.from(new Set(selectedTags)).sort((a,b)=>a.localeCompare(b));
-    renderTagChips();
-    panel.style.display = 'none';
-  };
   actions.appendChild(closeBtn);
-  actions.appendChild(applyBtn);
   container.appendChild(actions);
 
   panel.innerHTML = '';
