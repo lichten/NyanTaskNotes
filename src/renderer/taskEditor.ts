@@ -24,10 +24,20 @@ function updateMonthlyDayState() {
   const mode = el<HTMLSelectElement>('isRecurring').value; // once | daily | monthly
   const md = document.getElementById('monthlyDay') as HTMLInputElement | null;
   const rc = document.getElementById('recurrenceCount') as HTMLInputElement | null;
+  const sdRow = (document.getElementById('startDate')?.parentElement as HTMLElement | null);
+  const stRow = (document.getElementById('startTime')?.parentElement as HTMLElement | null);
+  const mdRow = (document.getElementById('monthlyDay')?.parentElement as HTMLElement | null);
+  const rcRow = (document.getElementById('recurrenceCount')?.parentElement as HTMLElement | null);
   if (md) {
     const monthly = mode === 'monthly';
     md.disabled = !monthly;
     md.placeholder = monthly ? '1..31' : '「毎月」で編集可';
+    // 毎月選択時に未入力なら「今日」の日付で補完
+    if (monthly && !md.value) {
+      const d = new Date();
+      const day = d.getDate();
+      if (day >= 1 && day <= 31) md.value = String(day);
+    }
   }
   if (rc) {
     const recurring = mode !== 'once';
@@ -36,14 +46,12 @@ function updateMonthlyDayState() {
     if (mode === 'daily') rc.value = '0'; // 毎日は0=無限を強制セット
     if (recurring && !rc.value) rc.value = '0'; // デフォルト0=無限
   }
-  // 「毎日」選択時は開始日に現在日を強制設定
-  if (mode === 'daily') {
-    const d = new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const da = String(d.getDate()).padStart(2, '0');
-    el<HTMLInputElement>('startDate').value = `${y}-${m}-${da}`;
-  }
+  // 「毎月」選択時は開始日/開始時刻の行を非表示
+  if (sdRow) sdRow.style.display = (mode === 'monthly') ? 'none' : '';
+  if (stRow) stRow.style.display = (mode === 'monthly') ? 'none' : '';
+  // 「１回のみ」選択時は「毎月の開始日」「繰り返し回数」の行を非表示
+  if (mdRow) mdRow.style.display = (mode === 'once') ? 'none' : '';
+  if (rcRow) rcRow.style.display = (mode === 'once') ? 'none' : '';
 }
 
 function formatDateInput(dateStr?: string | null): string {
@@ -158,10 +166,25 @@ async function onSave() {
         return { freq: 'daily', count } as any;
       }
       if (mode === 'monthly') {
-        const mdStr = (document.getElementById('monthlyDay') as HTMLInputElement | null)?.value || '';
-        const md = mdStr ? Number(mdStr) : null;
-        if (!md || isNaN(md) || md < 1 || md > 31) return null;
-        return { freq: 'monthly', monthlyDay: md, count } as any;
+        let mdNum: number | null = null;
+        const mdEl = (document.getElementById('monthlyDay') as HTMLInputElement | null);
+        const mdStr = (mdEl?.value || '').trim();
+        if (mdStr) {
+          const n = Number(mdStr);
+          if (!isNaN(n) && n >= 1 && n <= 31) mdNum = n;
+        }
+        if (mdNum === null) {
+          const sd = (el<HTMLInputElement>('startDate').value || '').trim();
+          if (/^\d{4}-\d{2}-\d{2}$/.test(sd)) {
+            const n = Number(sd.slice(8, 10));
+            if (!isNaN(n) && n >= 1 && n <= 31) mdNum = n;
+          }
+        }
+        if (mdNum === null) {
+          alert('「毎月」を選択した場合は「毎月の開始日」または「開始日」を入力してください。');
+          return null;
+        }
+        return { freq: 'monthly', monthlyDay: mdNum, count } as any;
       }
       return null;
     })()
