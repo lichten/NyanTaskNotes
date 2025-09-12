@@ -61,7 +61,7 @@ function updateMonthlyDayState() {
     const recurring = mode !== 'once';
     rc.disabled = !recurring;
     if (!recurring) rc.value = '1'; // 単発タスクは1固定
-    if (mode === 'daily') rc.value = '0'; // 毎日は0=無限を強制セット
+    if (mode === 'daily' || mode === 'monthlyNth') rc.value = '0'; // 毎日/第n週m曜日は0=無限を強制セット
     if (recurring && !rc.value) rc.value = '0'; // デフォルト0=無限
   }
   if (dh) {
