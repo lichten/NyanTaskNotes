@@ -37,6 +37,18 @@ export class TaskDatabase {
     await new Promise<void>((resolve, reject) => {
       this.db!.exec(sql, (err) => (err ? reject(err) : resolve()));
     });
+    // Lightweight migrations for added columns
+    await this.migrateSchema();
+  }
+
+  private async migrateSchema(): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+    // RECURRENCE_RULES: add HORIZON_DAYS if missing
+    const cols: Array<{ name: string }> = await this.all<any>("PRAGMA table_info('RECURRENCE_RULES')");
+    const hasHorizon = cols.some(c => String(c.name).toUpperCase() === 'HORIZON_DAYS');
+    if (!hasHorizon) {
+      await this.run("ALTER TABLE RECURRENCE_RULES ADD COLUMN HORIZON_DAYS INTEGER DEFAULT 14");
+    }
   }
 
   getDb(): sqlite3.Database | null {
@@ -216,7 +228,7 @@ export class TaskDatabase {
     }
   }
 
-  private async ensureRecurringDailyOccurrences(daysAhead: number = 14): Promise<void> {
+  private async ensureRecurringDailyOccurrences(defaultDaysAhead: number = 14): Promise<void> {
     // For COUNT=0 (infinite): create today..today+N-1 days.
     // For COUNT>=1 (finite): ensure exactly COUNT dates from START_DATE exist (add missing only).
     const today = new Date();
@@ -227,10 +239,10 @@ export class TaskDatabase {
       return `${y}-${m}-${da}`;
     };
     const tasks = await this.all<any>(
-      `SELECT T.ID AS TASK_ID, T.START_DATE, T.START_TIME, R.COUNT
+      `SELECT T.ID AS TASK_ID, T.START_DATE, T.START_TIME, R.COUNT, COALESCE(R.HORIZON_DAYS, ?) AS HORIZON_DAYS
        FROM TASKS T
        JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID AND R.FREQ = 'daily'
-       WHERE T.IS_RECURRING = 1`
+       WHERE T.IS_RECURRING = 1`, [defaultDaysAhead]
     );
     for (const t of tasks) {
       const count = Number(t.COUNT || 0);
@@ -255,7 +267,10 @@ export class TaskDatabase {
           }
         }
       } else {
-        for (let i = 0; i < daysAhead; i++) {
+        let horizon = Number(t.HORIZON_DAYS || defaultDaysAhead);
+        if (!isFinite(horizon) || horizon <= 0) horizon = defaultDaysAhead;
+        if (horizon > 365) horizon = 365; // safety upper bound
+        for (let i = 0; i < horizon; i++) {
           const d = new Date(today);
           d.setDate(today.getDate() + i);
           const scheduledDate = startDateStr(d);
@@ -483,7 +498,7 @@ export class TaskDatabase {
     if (params.query) { where.push('(TITLE LIKE ? OR DESCRIPTION LIKE ?)'); binds.push(`%${params.query}%`, `%${params.query}%`); }
     const sql = `SELECT T.ID, T.TITLE, T.DESCRIPTION, T.DUE_AT, T.START_DATE, T.START_TIME, T.IS_RECURRING,
                         T.CREATED_AT, T.UPDATED_AT,
-                        R.FREQ, R.MONTHLY_DAY, R.MONTHLY_NTH, R.MONTHLY_NTH_DOW, R.COUNT
+                        R.FREQ, R.MONTHLY_DAY, R.MONTHLY_NTH, R.MONTHLY_NTH_DOW, R.COUNT, R.HORIZON_DAYS
                  FROM TASKS T
                  LEFT JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID
                  ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
@@ -496,7 +511,7 @@ export class TaskDatabase {
   }
 
   async getTask(id: number): Promise<any | undefined> {
-    const sql = `SELECT T.*, R.FREQ, R.MONTHLY_DAY, R.MONTHLY_NTH, R.MONTHLY_NTH_DOW, R.COUNT
+    const sql = `SELECT T.*, R.FREQ, R.MONTHLY_DAY, R.MONTHLY_NTH, R.MONTHLY_NTH_DOW, R.COUNT, R.HORIZON_DAYS
                  FROM TASKS T
                  LEFT JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID
                  WHERE T.ID = ?`;
@@ -585,10 +600,13 @@ export class TaskDatabase {
       const count = Math.max(0, Number((rec as any).count || 0) || 0);
       await this.run(rsql, [id, 'monthly', null, rec.monthlyNth, rec.monthlyNthDow, count, now, now]);
     } else if (p.is_recurring && rec && rec.freq === 'daily') {
-      const rsql = `INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, COUNT, CREATED_AT, UPDATED_AT)
-                    VALUES (?, ?, ?, ?, ?, ?)`;
+      const rsql = `INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, COUNT, HORIZON_DAYS, CREATED_AT, UPDATED_AT)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)`;
       const count = Math.max(0, Number((rec as any).count || 0) || 0);
-      await this.run(rsql, [id, 'daily', null, count, now, now]);
+      let horizon = Number((rec as any).horizonDays || 14);
+      if (!isFinite(horizon) || horizon <= 0) horizon = 14;
+      if (horizon > 365) horizon = 365;
+      await this.run(rsql, [id, 'daily', null, count, horizon, now, now]);
     } else {
       // Non-recurring: create a rule row with COUNT=1
       const rsql = `INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, CREATED_AT, UPDATED_AT)
@@ -662,11 +680,17 @@ export class TaskDatabase {
       const existing = await this.get<any>('SELECT ID FROM RECURRENCE_RULES WHERE TASK_ID = ?', [id]);
       const count = Math.max(0, Number((rec as any).count || 0) || 0);
       if (existing && existing.ID) {
-        await this.run('UPDATE RECURRENCE_RULES SET FREQ = ?, MONTHLY_DAY = NULL, MONTHLY_NTH = NULL, MONTHLY_NTH_DOW = NULL, COUNT = ?, UPDATED_AT = ? WHERE TASK_ID = ?',
-          ['daily', count, now, id]);
+        let horizon = Number((rec as any).horizonDays || 14);
+        if (!isFinite(horizon) || horizon <= 0) horizon = 14;
+        if (horizon > 365) horizon = 365;
+        await this.run('UPDATE RECURRENCE_RULES SET FREQ = ?, MONTHLY_DAY = NULL, MONTHLY_NTH = NULL, MONTHLY_NTH_DOW = NULL, COUNT = ?, HORIZON_DAYS = ?, UPDATED_AT = ? WHERE TASK_ID = ?',
+          ['daily', count, horizon, now, id]);
       } else {
-        await this.run('INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, CREATED_AT, UPDATED_AT) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-          [id, 'daily', null, null, null, count, now, now]);
+        let horizon = Number((rec as any).horizonDays || 14);
+        if (!isFinite(horizon) || horizon <= 0) horizon = 14;
+        if (horizon > 365) horizon = 365;
+        await this.run('INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, HORIZON_DAYS, CREATED_AT, UPDATED_AT) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [id, 'daily', null, null, null, count, horizon, now, now]);
       }
     } else {
       // Non-recurring: ensure rule with COUNT=1 exists

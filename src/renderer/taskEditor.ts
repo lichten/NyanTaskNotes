@@ -15,6 +15,7 @@ type Task = {
   MONTHLY_NTH?: number | null;
   MONTHLY_NTH_DOW?: number | null;
   COUNT?: number | null;
+  HORIZON_DAYS?: number | null;
 };
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -27,11 +28,13 @@ function updateMonthlyDayState() {
   const mode = el<HTMLSelectElement>('isRecurring').value; // once | daily | monthly | monthlyNth
   const md = document.getElementById('monthlyDay') as HTMLInputElement | null;
   const rc = document.getElementById('recurrenceCount') as HTMLInputElement | null;
+  const dh = document.getElementById('dailyHorizonDays') as HTMLInputElement | null;
   const sdRow = (document.getElementById('startDate')?.parentElement as HTMLElement | null);
   const stRow = (document.getElementById('startTime')?.parentElement as HTMLElement | null);
   const mdRow = (document.getElementById('monthlyDay')?.parentElement as HTMLElement | null);
   const nthRow = (document.getElementById('monthlyNth')?.parentElement as HTMLElement | null);
   const rcRow = (document.getElementById('recurrenceCount')?.parentElement as HTMLElement | null);
+  const dhRow = (document.getElementById('dailyHorizonDays')?.parentElement as HTMLElement | null);
   if (md) {
     const monthly = mode === 'monthly';
     md.disabled = !monthly;
@@ -61,6 +64,11 @@ function updateMonthlyDayState() {
     if (mode === 'daily') rc.value = '0'; // 毎日は0=無限を強制セット
     if (recurring && !rc.value) rc.value = '0'; // デフォルト0=無限
   }
+  if (dh) {
+    const isDaily = mode === 'daily';
+    dh.disabled = !isDaily;
+    if (isDaily && !dh.value) dh.value = '14';
+  }
   // 「毎月」選択時は開始日/開始時刻の行を非表示
   const hideStart = (mode === 'monthly' || mode === 'monthlyNth');
   if (sdRow) sdRow.style.display = hideStart ? 'none' : '';
@@ -69,6 +77,7 @@ function updateMonthlyDayState() {
   if (mdRow) mdRow.style.display = (mode === 'once' || mode === 'monthlyNth') ? 'none' : '';
   if (nthRow) nthRow.style.display = (mode === 'monthlyNth') ? '' : 'none';
   if (rcRow) rcRow.style.display = (mode === 'once') ? 'none' : '';
+  if (dhRow) dhRow.style.display = (mode === 'daily') ? '' : 'none';
 }
 
 function formatDateInput(dateStr?: string | null): string {
@@ -122,6 +131,8 @@ function clearForm() {
   el<HTMLInputElement>('startTime').value = '00:00';
   const md = el<HTMLInputElement>('monthlyDay');
   if (md) md.value = '';
+  const dh = el<HTMLInputElement>('dailyHorizonDays');
+  if (dh) dh.value = '14';
   const nthEl = document.getElementById('monthlyNth') as HTMLSelectElement | null;
   const dowEl = document.getElementById('monthlyNthDow') as HTMLSelectElement | null;
   if (nthEl) nthEl.value = '1';
@@ -172,6 +183,8 @@ async function selectTask(id: number) {
   if (dowEl) dowEl.value = (t as any).MONTHLY_NTH_DOW != null ? String((t as any).MONTHLY_NTH_DOW) : (dowEl.value || '0');
   const rc = el<HTMLInputElement>('recurrenceCount');
   if (rc) rc.value = String((t.IS_RECURRING ? (t.COUNT ?? 0) : 1));
+  const dh = el<HTMLInputElement>('dailyHorizonDays');
+  if (dh) dh.value = (t.FREQ === 'daily' ? String((t as any).HORIZON_DAYS ?? 14) : '14');
   renderListSelection();
   updateMonthlyDayState();
 }
@@ -198,7 +211,11 @@ async function onSave() {
       let count = rcStr ? Number(rcStr) : 0;
       if (isNaN(count) || count < 0) count = 0; // 0=無限
       if (mode === 'daily') {
-        return { freq: 'daily', count } as any;
+        const dhStr = (document.getElementById('dailyHorizonDays') as HTMLInputElement | null)?.value || '';
+        let horizonDays = dhStr ? Number(dhStr) : 14;
+        if (!isFinite(horizonDays) || horizonDays <= 0) horizonDays = 14;
+        if (horizonDays > 365) horizonDays = 365;
+        return { freq: 'daily', count, horizonDays } as any;
       }
       if (mode === 'monthly') {
         let mdNum: number | null = null;
