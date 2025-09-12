@@ -61,14 +61,34 @@
             <select id="isRecurring">
               <option value="once">１回のみ</option>
               <option value="daily">毎日</option>
-              <option value="monthly">毎月</option>
+              <option value="monthly">毎月（日付）</option>
+              <option value="monthlyNth">第n週m曜日</option>
             </select>
           </div>
           <div class="row"><label for="startDate">開始日</label><input id="startDate" type="date" /></div>
           <div class="row"><label for="startTime">開始時刻</label><input id="startTime" type="time" /></div>
           <div class="row"><label for="monthlyDay">毎月の開始日</label><input id="monthlyDay" type="number" min="1" max="31" placeholder="1..31" /></div>
+          <div class="row"><label for="monthlyNth">第n週</label>
+            <select id="monthlyNth">
+              <option value="1">第1</option>
+              <option value="2">第2</option>
+              <option value="3">第3</option>
+              <option value="4">第4</option>
+              <option value="5">第5</option>
+              <option value="-1">最終</option>
+            </select>
+            <select id="monthlyNthDow" style="flex:1;">
+              <option value="0">日曜日</option>
+              <option value="1">月曜日</option>
+              <option value="2">火曜日</option>
+              <option value="3">水曜日</option>
+              <option value="4">木曜日</option>
+              <option value="5">金曜日</option>
+              <option value="6">土曜日</option>
+            </select>
+          </div>
           <div class="row"><label for="recurrenceCount">繰り返し回数</label><input id="recurrenceCount" type="number" min="0" placeholder="0=無限, 1.." /></div>
-          <div class="small">「繰り返し」で「毎月」を選び「毎月の開始日」を指定すると、毎月その日に開始するタスクとして保存します（第N曜日などは後続で追加予定）。「毎日」を選ぶと開始日から毎日生成します。</div>
+          <div class="small">「繰り返し」で「毎月（日付）」は毎月の同じ日付。「第n週m曜日」は毎月の特定の週と曜日（例: 第2週火曜/最終週金曜）。「毎日」は開始日から毎日生成します。</div>
         </form>
       </section>
     </main>
