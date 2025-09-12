@@ -8,7 +8,7 @@
 -- 曜日表現は 0=日,1=月,2=火,3=水,4=木,5=金,6=土 を前提
 
 PRAGMA foreign_keys = ON;
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;
 
 CREATE TABLE IF NOT EXISTS "TASKS" (
   "ID" INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,6 +37,8 @@ CREATE TABLE IF NOT EXISTS "RECURRENCE_RULES" (
   "END_KIND" TEXT NOT NULL DEFAULT 'none' CHECK("END_KIND" IN ('none','until','count')),
   "UNTIL_DATE" TEXT,
   "COUNT" INTEGER,
+  -- 日次の生成ウィンドウ（日数）。daily のみで使用。既定14日。
+  "HORIZON_DAYS" INTEGER DEFAULT 14,
   -- 週次用: 曜日ビットマスク（bit0=日〜bit6=土）
   "WEEKLY_DOWS" INTEGER DEFAULT 0,
   -- 月次（日付指定）: 1..31
