@@ -24,7 +24,7 @@ let tasks: Task[] = [];
 let selectedId: number | null = null;
 let selectedTags: string[] = [];
 let allTagNames: string[] = [];
-function updateMonthlyDayState() {
+function updateMonthlyDayState(ev?: Event) {
   const mode = el<HTMLSelectElement>('isRecurring').value; // once | daily | monthly | monthlyNth
   const md = document.getElementById('monthlyDay') as HTMLInputElement | null;
   const rc = document.getElementById('recurrenceCount') as HTMLInputElement | null;
@@ -67,7 +67,15 @@ function updateMonthlyDayState() {
   if (dh) {
     const isDaily = mode === 'daily';
     dh.disabled = !isDaily;
-    if (isDaily && !dh.value) dh.value = '14';
+    if (isDaily) {
+      // ユーザーが「毎日」を選択した変更イベント時は 2 に設定。
+      // 初期描画や他の呼び出しでは既存値を尊重し、未入力のみ14を入れる。
+      if (ev instanceof Event) {
+        dh.value = '2';
+      } else if (!dh.value) {
+        dh.value = '14';
+      }
+    }
   }
   // 「毎月」選択時は開始日/開始時刻の行を非表示
   const hideStart = (mode === 'monthly' || mode === 'monthlyNth');
