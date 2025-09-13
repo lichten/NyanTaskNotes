@@ -49,6 +49,10 @@ export class TaskDatabase {
     if (!hasHorizon) {
       await this.run("ALTER TABLE RECURRENCE_RULES ADD COLUMN HORIZON_DAYS INTEGER DEFAULT 14");
     }
+    const hasIntervalAnchor = cols.some(c => String(c.name).toUpperCase() === 'INTERVAL_ANCHOR');
+    if (!hasIntervalAnchor) {
+      await this.run("ALTER TABLE RECURRENCE_RULES ADD COLUMN INTERVAL_ANCHOR TEXT NOT NULL DEFAULT 'scheduled'");
+    }
   }
 
   getDb(): sqlite3.Database | null {
@@ -239,19 +243,25 @@ export class TaskDatabase {
       return `${y}-${m}-${da}`;
     };
     const tasks = await this.all<any>(
-      `SELECT T.ID AS TASK_ID, T.START_DATE, T.START_TIME, R.COUNT, COALESCE(R.HORIZON_DAYS, ?) AS HORIZON_DAYS
+      `SELECT T.ID AS TASK_ID, T.START_DATE, T.START_TIME, R.COUNT,
+              COALESCE(R.HORIZON_DAYS, ?) AS HORIZON_DAYS,
+              COALESCE(R.INTERVAL, 1) AS INTERVAL,
+              COALESCE(R.INTERVAL_ANCHOR, 'scheduled') AS INTERVAL_ANCHOR
        FROM TASKS T
        JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID AND R.FREQ = 'daily'
        WHERE T.IS_RECURRING = 1`, [defaultDaysAhead]
     );
     for (const t of tasks) {
+      const interval = Math.max(1, Number(t.INTERVAL || 1));
+      const anchor = String(t.INTERVAL_ANCHOR || 'scheduled');
+      if (anchor === 'completed') continue; // 完了基準は先出ししない
       const count = Number(t.COUNT || 0);
       if (count >= 1) {
         if (!t.START_DATE) continue;
         const start = new Date(t.START_DATE as string);
         for (let i = 0; i < count; i++) {
           const d = new Date(start);
-          d.setDate(start.getDate() + i);
+          d.setDate(start.getDate() + i * interval);
           const scheduledDate = startDateStr(d);
           const exists = await this.get<any>(
             `SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?`,
@@ -270,11 +280,15 @@ export class TaskDatabase {
         let horizon = Number(t.HORIZON_DAYS || defaultDaysAhead);
         if (!isFinite(horizon) || horizon <= 0) horizon = defaultDaysAhead;
         if (horizon > 365) horizon = 365; // safety upper bound
+        // generate only dates aligned with interval from START_DATE
+        const start = t.START_DATE ? new Date(t.START_DATE as string) : new Date(today);
         for (let i = 0; i < horizon; i++) {
           const d = new Date(today);
           d.setDate(today.getDate() + i);
+          const daysDiff = Math.floor((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - new Date(start.getFullYear(), start.getMonth(), start.getDate()).getTime()) / (1000*60*60*24));
+          if (daysDiff < 0) continue;
+          if (daysDiff % interval !== 0) continue;
           const scheduledDate = startDateStr(d);
-          if (t.START_DATE && new Date(scheduledDate) < new Date(t.START_DATE)) continue;
           const exists = await this.get<any>(
             `SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?`,
             [t.TASK_ID, scheduledDate]
@@ -288,6 +302,68 @@ export class TaskDatabase {
             );
           }
         }
+      }
+    }
+  }
+
+  private async ensureDailyCompletedAnchorOccurrences(): Promise<void> {
+    // 保証: 完了基準のタスクは pending を最大1件に保つ。必要なら1件だけ生成。
+    const tasks = await this.all<any>(
+      `SELECT T.ID AS TASK_ID, T.START_DATE, T.START_TIME,
+              COALESCE(R.INTERVAL, 1) AS INTERVAL,
+              COALESCE(R.COUNT, 0) AS COUNT
+       FROM TASKS T
+       JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID AND R.FREQ = 'daily' AND COALESCE(R.INTERVAL_ANCHOR,'scheduled') = 'completed'
+       WHERE T.IS_RECURRING = 1`
+    );
+    const dateOnly = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    for (const t of tasks) {
+      const interval = Math.max(1, Number(t.INTERVAL || 1));
+      const start = t.START_DATE ? new Date(t.START_DATE as string) : new Date();
+      // 現在の pending を確認
+      const pendings = await this.all<any>(`SELECT ID, SCHEDULED_DATE FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND STATUS = 'pending' ORDER BY SCHEDULED_DATE ASC`, [t.TASK_ID]);
+      if (pendings.length > 1) {
+        // 先頭を残し、他を削除
+        for (let i = 1; i < pendings.length; i++) {
+          await this.run(`DELETE FROM TASK_OCCURRENCES WHERE ID = ?`, [pendings[i].ID]);
+        }
+      }
+      // 停止条件（COUNT）
+      const doneCountRow = await this.get<any>(`SELECT COUNT(1) AS C FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND STATUS = 'done'`, [t.TASK_ID]);
+      const doneCount = Number((doneCountRow && doneCountRow.C) || 0);
+      const finite = Number(t.COUNT || 0) >= 1;
+      if (finite && doneCount >= Number(t.COUNT)) {
+        // もう生成しない。余剰pendingがあれば削除
+        if (pendings.length === 1) await this.run(`DELETE FROM TASK_OCCURRENCES WHERE ID = ?`, [pendings[0].ID]);
+        continue;
+      }
+      if (pendings.length === 1) continue; // 1件あればOK
+      // 初回（過去含め発生履歴が0件）の場合は START_DATE で1件生成（INTERVALを足さない）
+      const totalCountRow = await this.get<any>(`SELECT COUNT(1) AS C FROM TASK_OCCURRENCES WHERE TASK_ID = ?`, [t.TASK_ID]);
+      const totalCount = Number((totalCountRow && totalCountRow.C) || 0);
+      let nextDate: string;
+      if (totalCount === 0) {
+        nextDate = dateOnly(start);
+      } else {
+        // 基準日: 直近の完了日 or START_DATE
+        const lastDone = await this.get<any>(`SELECT COMPLETED_AT FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND STATUS = 'done' ORDER BY DATE(COALESCE(COMPLETED_AT, UPDATED_AT)) DESC LIMIT 1`, [t.TASK_ID]);
+        let base = start;
+        if (lastDone && lastDone.COMPLETED_AT) {
+          const d = new Date(lastDone.COMPLETED_AT as string);
+          base = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+        }
+        const next = new Date(base);
+        next.setDate(base.getDate() + interval);
+        nextDate = dateOnly(next);
+      }
+      const exists = await this.get<any>(`SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?`, [t.TASK_ID, nextDate]);
+      if (!exists) {
+        const nowIso = this.nowIso();
+        await this.run(
+          `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
+           VALUES (?, ?, ?, 'pending', ?, ?)`,
+          [t.TASK_ID, nextDate, t.START_TIME || null, nowIso, nowIso]
+        );
       }
     }
   }
@@ -309,9 +385,14 @@ export class TaskDatabase {
 
     const targetDates: string[] = [];
     if (task.FREQ === 'daily') {
+      const interval = Math.max(1, Number((task as any).INTERVAL || 1));
+      const anchor = String((task as any).INTERVAL_ANCHOR || 'scheduled');
+      if (anchor === 'completed') {
+        return; // 完了基準はここで正規化しない（pending=1件維持のポリシー）
+      }
       for (let i = 0; i < count; i++) {
         const d = new Date(startDate);
-        d.setDate(startDate.getDate() + i);
+        d.setDate(startDate.getDate() + i * interval);
         targetDates.push(startDateStr(d));
       }
     } else if (task.FREQ === 'monthly' && task.MONTHLY_DAY) {
@@ -403,6 +484,7 @@ export class TaskDatabase {
     await this.ensureSingleOccurrences();
     await this.ensureRecurringMonthlyOccurrences(2);
     await this.ensureRecurringDailyOccurrences(14);
+    await this.ensureDailyCompletedAnchorOccurrences();
 
     const where: string[] = [];
     const binds: any[] = [];
@@ -426,7 +508,9 @@ export class TaskDatabase {
     const now = this.nowIso();
     const occ = await this.get<any>(
       `SELECT O.ID, O.TASK_ID, O.SCHEDULED_DATE, T.START_DATE, T.START_TIME,
-              R.FREQ, R.MONTHLY_DAY, R.MONTHLY_NTH, R.MONTHLY_NTH_DOW, R.COUNT
+              R.FREQ, R.MONTHLY_DAY, R.MONTHLY_NTH, R.MONTHLY_NTH_DOW, R.COUNT,
+              COALESCE(R.INTERVAL,1) AS INTERVAL,
+              COALESCE(R.INTERVAL_ANCHOR,'scheduled') AS INTERVAL_ANCHOR
        FROM TASK_OCCURRENCES O
        JOIN TASKS T ON T.ID = O.TASK_ID
        LEFT JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID
@@ -462,9 +546,18 @@ export class TaskDatabase {
         );
       }
     } else if (occ.FREQ === 'daily' && (!occ.COUNT || Number(occ.COUNT) === 0)) {
-      const d = new Date(occ.SCHEDULED_DATE as string);
-      d.setDate(d.getDate() + 1);
-      const nextDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const interval = Math.max(1, Number((occ as any).INTERVAL || 1));
+      let nextDate: string;
+      if ((occ as any).INTERVAL_ANCHOR === 'completed') {
+        const cd = new Date(now);
+        const base = new Date(cd.getFullYear(), cd.getMonth(), cd.getDate());
+        base.setDate(base.getDate() + interval);
+        nextDate = `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, '0')}-${String(base.getDate()).padStart(2, '0')}`;
+      } else {
+        const d = new Date(occ.SCHEDULED_DATE as string);
+        d.setDate(d.getDate() + interval);
+        nextDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      }
       const exists = await this.get<any>(`SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?`, [occ.TASK_ID, nextDate]);
       if (!exists) {
         await this.run(
@@ -498,7 +591,8 @@ export class TaskDatabase {
     if (params.query) { where.push('(TITLE LIKE ? OR DESCRIPTION LIKE ?)'); binds.push(`%${params.query}%`, `%${params.query}%`); }
     const sql = `SELECT T.ID, T.TITLE, T.DESCRIPTION, T.DUE_AT, T.START_DATE, T.START_TIME, T.IS_RECURRING,
                         T.CREATED_AT, T.UPDATED_AT,
-                        R.FREQ, R.MONTHLY_DAY, R.MONTHLY_NTH, R.MONTHLY_NTH_DOW, R.COUNT, R.HORIZON_DAYS
+                        R.FREQ, R.MONTHLY_DAY, R.MONTHLY_NTH, R.MONTHLY_NTH_DOW, R.COUNT, R.HORIZON_DAYS,
+                        R.INTERVAL, COALESCE(R.INTERVAL_ANCHOR,'scheduled') AS INTERVAL_ANCHOR
                  FROM TASKS T
                  LEFT JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID
                  ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
@@ -511,7 +605,7 @@ export class TaskDatabase {
   }
 
   async getTask(id: number): Promise<any | undefined> {
-    const sql = `SELECT T.*, R.FREQ, R.MONTHLY_DAY, R.MONTHLY_NTH, R.MONTHLY_NTH_DOW, R.COUNT, R.HORIZON_DAYS
+    const sql = `SELECT T.*, R.FREQ, R.MONTHLY_DAY, R.MONTHLY_NTH, R.MONTHLY_NTH_DOW, R.COUNT, R.HORIZON_DAYS, R.INTERVAL, R.INTERVAL_ANCHOR
                  FROM TASKS T
                  LEFT JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID
                  WHERE T.ID = ?`;
@@ -600,13 +694,15 @@ export class TaskDatabase {
       const count = Math.max(0, Number((rec as any).count || 0) || 0);
       await this.run(rsql, [id, 'monthly', null, rec.monthlyNth, rec.monthlyNthDow, count, now, now]);
     } else if (p.is_recurring && rec && rec.freq === 'daily') {
-      const rsql = `INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, COUNT, HORIZON_DAYS, CREATED_AT, UPDATED_AT)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)`;
+      const rsql = `INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, COUNT, HORIZON_DAYS, INTERVAL, INTERVAL_ANCHOR, CREATED_AT, UPDATED_AT)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
       const count = Math.max(0, Number((rec as any).count || 0) || 0);
       let horizon = Number((rec as any).horizonDays || 14);
       if (!isFinite(horizon) || horizon <= 0) horizon = 14;
       if (horizon > 365) horizon = 365;
-      await this.run(rsql, [id, 'daily', null, count, horizon, now, now]);
+      const interval = Math.max(1, Number((rec as any).interval || 1));
+      const anchor = String((rec as any).anchor || 'scheduled');
+      await this.run(rsql, [id, 'daily', null, count, horizon, interval, anchor, now, now]);
     } else {
       // Non-recurring: create a rule row with COUNT=1
       const rsql = `INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, CREATED_AT, UPDATED_AT)
@@ -631,7 +727,12 @@ export class TaskDatabase {
       // Finite count: reconcile occurrences to match count
       const count = Number((rec && rec.count) || 0);
       if (count >= 1) {
-        await this.reconcileOccurrencesForTask(id);
+        if (rec && rec.freq === 'daily' && String((rec as any).anchor || 'scheduled') === 'completed') {
+          // 完了基準: pendingは1件のみ（ここでは不要な余剰を削除し、必要時は後段でensure）
+          // 直後のensureで1件が用意される
+        } else {
+          await this.reconcileOccurrencesForTask(id);
+        }
       }
     }
     // Tags
@@ -683,14 +784,18 @@ export class TaskDatabase {
         let horizon = Number((rec as any).horizonDays || 14);
         if (!isFinite(horizon) || horizon <= 0) horizon = 14;
         if (horizon > 365) horizon = 365;
-        await this.run('UPDATE RECURRENCE_RULES SET FREQ = ?, MONTHLY_DAY = NULL, MONTHLY_NTH = NULL, MONTHLY_NTH_DOW = NULL, COUNT = ?, HORIZON_DAYS = ?, UPDATED_AT = ? WHERE TASK_ID = ?',
-          ['daily', count, horizon, now, id]);
+        const interval = Math.max(1, Number((rec as any).interval || 1));
+        const anchor = String((rec as any).anchor || 'scheduled');
+        await this.run('UPDATE RECURRENCE_RULES SET FREQ = ?, MONTHLY_DAY = NULL, MONTHLY_NTH = NULL, MONTHLY_NTH_DOW = NULL, COUNT = ?, HORIZON_DAYS = ?, INTERVAL = ?, INTERVAL_ANCHOR = ?, UPDATED_AT = ? WHERE TASK_ID = ?',
+          ['daily', count, horizon, interval, anchor, now, id]);
       } else {
         let horizon = Number((rec as any).horizonDays || 14);
         if (!isFinite(horizon) || horizon <= 0) horizon = 14;
         if (horizon > 365) horizon = 365;
-        await this.run('INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, HORIZON_DAYS, CREATED_AT, UPDATED_AT) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [id, 'daily', null, null, null, count, horizon, now, now]);
+        const interval = Math.max(1, Number((rec as any).interval || 1));
+        const anchor = String((rec as any).anchor || 'scheduled');
+        await this.run('INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, HORIZON_DAYS, INTERVAL, INTERVAL_ANCHOR, CREATED_AT, UPDATED_AT) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [id, 'daily', null, null, null, count, horizon, interval, anchor, now, now]);
       }
     } else {
       // Non-recurring: ensure rule with COUNT=1 exists
@@ -718,7 +823,11 @@ export class TaskDatabase {
 
     // If recurring with finite count, reconcile occurrences
     if (p.is_recurring && rec && typeof rec.count !== 'undefined' && Number(rec.count) >= 1) {
-      await this.reconcileOccurrencesForTask(id);
+      if (rec && rec.freq === 'daily' && String((rec as any).anchor || 'scheduled') === 'completed') {
+        // 完了基準: pendingはensure側で1件だけ維持
+      } else {
+        await this.reconcileOccurrencesForTask(id);
+      }
     }
 
     // Tags

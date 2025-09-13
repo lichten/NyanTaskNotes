@@ -26,6 +26,22 @@ function formatDateInput(dateStr?: string | null): string {
   return `${y}-${m}-${da}`;
 }
 
+function formatDateWithWeekday(dateStr?: string | null): string {
+  const base = formatDateInput(dateStr);
+  if (!base) return '';
+  // Compute weekday using local date to avoid TZ issues
+  let d: Date;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(base)) {
+    const [yy, mm, dd] = base.split('-').map(Number);
+    d = new Date(yy, mm - 1, dd);
+  } else {
+    d = new Date(base);
+  }
+  const weekdays = ['日', '月', '火', '水', '木', '金', '土'];
+  const w = weekdays[d.getDay()];
+  return `${base} (${w})`;
+}
+
 function ymd(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -154,7 +170,7 @@ async function loadTasks(): Promise<void> {
       left.appendChild(titleRow);
       const metaRow = document.createElement('div');
       metaRow.className = 'meta';
-      metaRow.textContent = `予定日: ${formatDateInput(o.SCHEDULED_DATE)} ・ タスク: ${o.TASK_ID} ・ 状態: ${o.OCC_STATUS}`;
+      metaRow.textContent = `予定日: ${formatDateWithWeekday(o.SCHEDULED_DATE)} ・ タスク: ${o.TASK_ID} ・ 状態: ${o.OCC_STATUS}`;
       left.appendChild(metaRow);
       const actions = document.createElement('div');
       actions.className = 'actions';

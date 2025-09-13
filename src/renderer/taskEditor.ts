@@ -11,6 +11,8 @@ type Task = {
   IS_RECURRING?: number;
   // Recurrence rule (joined)
   FREQ?: string | null;
+  INTERVAL?: number | null;
+  INTERVAL_ANCHOR?: string | null;
   MONTHLY_DAY?: number | null;
   MONTHLY_NTH?: number | null;
   MONTHLY_NTH_DOW?: number | null;
@@ -25,16 +27,18 @@ let selectedId: number | null = null;
 let selectedTags: string[] = [];
 let allTagNames: string[] = [];
 function updateMonthlyDayState(ev?: Event) {
-  const mode = el<HTMLSelectElement>('isRecurring').value; // once | daily | monthly | monthlyNth
+  const mode = el<HTMLSelectElement>('isRecurring').value; // once | daily | everyNScheduled | everyNCompleted | monthly | monthlyNth
   const md = document.getElementById('monthlyDay') as HTMLInputElement | null;
   const rc = document.getElementById('recurrenceCount') as HTMLInputElement | null;
   const dh = document.getElementById('dailyHorizonDays') as HTMLInputElement | null;
+  const iv = document.getElementById('intervalDays') as HTMLInputElement | null;
   const sdRow = (document.getElementById('startDate')?.parentElement as HTMLElement | null);
   const stRow = (document.getElementById('startTime')?.parentElement as HTMLElement | null);
   const mdRow = (document.getElementById('monthlyDay')?.parentElement as HTMLElement | null);
   const nthRow = (document.getElementById('monthlyNth')?.parentElement as HTMLElement | null);
   const rcRow = (document.getElementById('recurrenceCount')?.parentElement as HTMLElement | null);
   const dhRow = (document.getElementById('dailyHorizonDays')?.parentElement as HTMLElement | null);
+  const ivRow = (document.getElementById('intervalDays')?.parentElement as HTMLElement | null);
   if (md) {
     const monthly = mode === 'monthly';
     md.disabled = !monthly;
@@ -61,13 +65,13 @@ function updateMonthlyDayState(ev?: Event) {
     const recurring = mode !== 'once';
     rc.disabled = !recurring;
     if (!recurring) rc.value = '1'; // 単発タスクは1固定
-    if (mode === 'daily' || mode === 'monthlyNth') rc.value = '0'; // 毎日/第n週m曜日は0=無限を強制セット
+    if (mode === 'daily' || mode === 'monthlyNth') rc.value = '0'; // 毎日/第n週m曜日は0=無限を推奨
     if (recurring && !rc.value) rc.value = '0'; // デフォルト0=無限
   }
   if (dh) {
-    const isDaily = mode === 'daily';
-    dh.disabled = !isDaily;
-    if (isDaily) {
+    const isDailyHorizon = (mode === 'daily' || mode === 'everyNScheduled');
+    dh.disabled = !isDailyHorizon;
+    if (isDailyHorizon) {
       // ユーザーが「毎日」を選択した変更イベント時は 2 に設定。
       // 初期描画や他の呼び出しでは既存値を尊重し、未入力のみ14を入れる。
       if (ev instanceof Event) {
@@ -77,6 +81,11 @@ function updateMonthlyDayState(ev?: Event) {
       }
     }
   }
+  if (iv) {
+    const showInterval = (mode === 'everyNScheduled' || mode === 'everyNCompleted');
+    iv.disabled = !showInterval;
+    if (!iv.value) iv.value = '2';
+  }
   // 「毎月」選択時は開始日/開始時刻の行を非表示
   const hideStart = (mode === 'monthly' || mode === 'monthlyNth');
   if (sdRow) sdRow.style.display = hideStart ? 'none' : '';
@@ -85,7 +94,8 @@ function updateMonthlyDayState(ev?: Event) {
   if (mdRow) mdRow.style.display = (mode === 'once' || mode === 'monthlyNth') ? 'none' : '';
   if (nthRow) nthRow.style.display = (mode === 'monthlyNth') ? '' : 'none';
   if (rcRow) rcRow.style.display = (mode === 'once') ? 'none' : '';
-  if (dhRow) dhRow.style.display = (mode === 'daily') ? '' : 'none';
+  if (dhRow) dhRow.style.display = (mode === 'daily' || mode === 'everyNScheduled') ? '' : 'none';
+  if (ivRow) ivRow.style.display = (mode === 'everyNScheduled' || mode === 'everyNCompleted') ? '' : 'none';
 }
 
 function formatDateInput(dateStr?: string | null): string {
@@ -178,13 +188,21 @@ async function selectTask(id: number) {
       if ((t as any).MONTHLY_NTH !== null && typeof (t as any).MONTHLY_NTH !== 'undefined') return 'monthlyNth';
       return 'monthly';
     }
-    if (t.FREQ === 'daily') return 'daily';
+    if (t.FREQ === 'daily') {
+      const interval = Number((t as any).INTERVAL || 1);
+      const anchor = (t as any).INTERVAL_ANCHOR || 'scheduled';
+      if (anchor === 'completed') return 'everyNCompleted';
+      if (interval > 1) return 'everyNScheduled';
+      return 'daily';
+    }
     return 'daily';
   })();
   el<HTMLInputElement>('startDate').value = formatDateInput(t.START_DATE);
   el<HTMLInputElement>('startTime').value = t.START_TIME || '';
   const md = el<HTMLInputElement>('monthlyDay');
   if (md) md.value = t.MONTHLY_DAY ? String(t.MONTHLY_DAY) : '';
+  const iv = document.getElementById('intervalDays') as HTMLInputElement | null;
+  if (iv) iv.value = String(Math.max(1, Number((t as any).INTERVAL || 1)));
   const nthEl = document.getElementById('monthlyNth') as HTMLSelectElement | null;
   const dowEl = document.getElementById('monthlyNthDow') as HTMLSelectElement | null;
   if (nthEl) nthEl.value = (t as any).MONTHLY_NTH != null ? String((t as any).MONTHLY_NTH) : (nthEl.value || '1');
@@ -192,13 +210,13 @@ async function selectTask(id: number) {
   const rc = el<HTMLInputElement>('recurrenceCount');
   if (rc) rc.value = String((t.IS_RECURRING ? (t.COUNT ?? 0) : 1));
   const dh = el<HTMLInputElement>('dailyHorizonDays');
-  if (dh) dh.value = (t.FREQ === 'daily' ? String((t as any).HORIZON_DAYS ?? 14) : '14');
+  if (dh) dh.value = (t.FREQ === 'daily' && (t as any).INTERVAL_ANCHOR !== 'completed' ? String((t as any).HORIZON_DAYS ?? 14) : '14');
   renderListSelection();
   updateMonthlyDayState();
 }
 
 async function onSave() {
-  const mode = el<HTMLSelectElement>('isRecurring').value; // once | daily | monthly | monthlyNth
+  const mode = el<HTMLSelectElement>('isRecurring').value; // once | daily | everyNScheduled | everyNCompleted | monthly | monthlyNth
   const startDateInput = el<HTMLInputElement>('startDate').value || '';
   if (mode === 'daily' && !startDateInput) {
     alert('開始日は必須です（毎日）。開始日を入力してください。');
@@ -213,7 +231,7 @@ async function onSave() {
     isRecurring: mode !== 'once',
     startDate: startDateInput || null,
     startTime: el<HTMLInputElement>('startTime').value || null,
-    // Recurrence rule (monthly day-of-month)
+    // Recurrence rule (monthly/daily)
     recurrence: (() => {
       const rcStr = (document.getElementById('recurrenceCount') as HTMLInputElement | null)?.value || '';
       let count = rcStr ? Number(rcStr) : 0;
@@ -223,7 +241,22 @@ async function onSave() {
         let horizonDays = dhStr ? Number(dhStr) : 14;
         if (!isFinite(horizonDays) || horizonDays <= 0) horizonDays = 14;
         if (horizonDays > 365) horizonDays = 365;
-        return { freq: 'daily', count, horizonDays } as any;
+        return { freq: 'daily', count, horizonDays, interval: 1, anchor: 'scheduled' } as any;
+      }
+      if (mode === 'everyNScheduled' || mode === 'everyNCompleted') {
+        const ivStr = (document.getElementById('intervalDays') as HTMLInputElement | null)?.value || '';
+        let interval = ivStr ? Number(ivStr) : 2;
+        if (!isFinite(interval) || interval < 1) interval = 1;
+        if (interval > 365) interval = 365;
+        let horizonDays: number | undefined = undefined;
+        if (mode === 'everyNScheduled') {
+          const dhStr = (document.getElementById('dailyHorizonDays') as HTMLInputElement | null)?.value || '';
+          let h = dhStr ? Number(dhStr) : 14;
+          if (!isFinite(h) || h <= 0) h = 14;
+          if (h > 365) h = 365;
+          horizonDays = h;
+        }
+        return { freq: 'daily', count, interval, anchor: (mode === 'everyNCompleted' ? 'completed' : 'scheduled'), horizonDays } as any;
       }
       if (mode === 'monthly') {
         let mdNum: number | null = null;

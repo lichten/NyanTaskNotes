@@ -61,12 +61,15 @@
             <select id="isRecurring">
               <option value="once">１回のみ</option>
               <option value="daily">毎日</option>
+              <option value="everyNScheduled">指定日数ごと（前回発生した日付から）</option>
+              <option value="everyNCompleted">指定日数ごと（前回完了した日付から）</option>
               <option value="monthly">毎月（日付）</option>
               <option value="monthlyNth">第n週m曜日</option>
             </select>
           </div>
           <div class="row"><label for="startDate">開始日</label><input id="startDate" type="date" /></div>
           <div class="row"><label for="startTime">開始時刻</label><input id="startTime" type="time" /></div>
+          <div class="row"><label for="intervalDays">間隔（日）</label><input id="intervalDays" type="number" min="1" max="365" placeholder="例: 2" /></div>
           <div class="row"><label for="monthlyDay">毎月の開始日</label><input id="monthlyDay" type="number" min="1" max="31" placeholder="1..31" /></div>
           <div class="row"><label for="monthlyNth">第n週</label>
             <select id="monthlyNth">
@@ -88,8 +91,8 @@
             </select>
           </div>
           <div class="row"><label for="recurrenceCount">繰り返し回数</label><input id="recurrenceCount" type="number" min="0" placeholder="0=無限, 1.." /></div>
-          <div class="row"><label for="dailyHorizonDays">生成日数（毎日）</label><input id="dailyHorizonDays" type="number" min="1" max="365" placeholder="例: 14" /></div>
-          <div class="small">「繰り返し」で「毎月（日付）」は毎月の同じ日付。「第n週m曜日」は毎月の特定の週と曜日（例: 第2週火曜/最終週金曜）。「毎日」は開始日から毎日生成します。なお「毎日」を選択すると、既定で「生成日数（毎日）」は2日に設定されます（必要に応じて変更可）。</div>
+          <div class="row"><label for="dailyHorizonDays">生成日数（毎日/指定日数・発生基準）</label><input id="dailyHorizonDays" type="number" min="1" max="365" placeholder="例: 14" /></div>
+          <div class="small">「毎日」は開始日から毎日生成します。「指定日数ごと（前回発生した日付から）」は予定日を基準に n 日間隔で生成し、先出し生成します。「指定日数ごと（前回完了した日付から）」は完了日を基準に n 日後を1件だけ生成します。なお「毎日」を選択すると、既定で「生成日数」は2日に設定されます（必要に応じて変更可）。</div>
         </form>
       </section>
     </main>
