@@ -331,28 +331,29 @@ export class TaskDatabase {
       if (count >= 1) {
         if (!t.START_DATE) continue;
         const start = new Date(t.START_DATE as string);
-        // find first matching weekday on/after START_DATE
-        let first = new Date(start);
-        let found = false;
-        for (let i = 0; i < 7; i++) {
-          const d = new Date(start);
-          d.setDate(start.getDate() + i);
-          const dow = d.getDay();
-          if (dowsMask & (1 << dow)) { first = d; found = true; break; }
-        }
-        if (!found) continue;
-        for (let i = 0; i < count; i++) {
-          const d = new Date(first);
-          d.setDate(first.getDate() + i * 7 * interval);
-          const scheduledDate = dateStr(d);
-          const exists = await this.get<any>(`SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?`, [t.TASK_ID, scheduledDate]);
-          if (!exists) {
-            const nowIso = this.nowIso();
-            await this.run(
-              `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
-               VALUES (?, ?, ?, 'pending', ?, ?)`,
-              [t.TASK_ID, scheduledDate, t.START_TIME || null, nowIso, nowIso]
-            );
+        const start0 = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+        const startSunday = new Date(start0);
+        startSunday.setDate(start0.getDate() - start0.getDay());
+        let produced = 0;
+        for (let w = 0; w < 520 && produced < count; w += interval) {
+          const weekStart = new Date(startSunday);
+          weekStart.setDate(startSunday.getDate() + w * 7);
+          for (let dow = 0; dow <= 6 && produced < count; dow++) {
+            if (!(dowsMask & (1 << dow))) continue;
+            const d = new Date(weekStart);
+            d.setDate(weekStart.getDate() + dow);
+            if (d < start0) continue;
+            const scheduledDate = dateStr(d);
+            const exists = await this.get<any>(`SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?`, [t.TASK_ID, scheduledDate]);
+            if (!exists) {
+              const nowIso = this.nowIso();
+              await this.run(
+                `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
+                 VALUES (?, ?, ?, 'pending', ?, ?)`,
+                [t.TASK_ID, scheduledDate, t.START_TIME || null, nowIso, nowIso]
+              );
+            }
+            produced++;
           }
         }
       } else {
@@ -485,19 +486,19 @@ export class TaskDatabase {
       const mask = Number((task as any).WEEKLY_DOWS || 0);
       if (!mask) return;
       const interval = Math.max(1, Number((task as any).INTERVAL || 1));
-      // find first day on/after startDate that matches mask
-      let first = new Date(startDate);
-      let found = false;
-      for (let i = 0; i < 7; i++) {
-        const d = new Date(startDate);
-        d.setDate(startDate.getDate() + i);
-        if (mask & (1 << d.getDay())) { first = d; found = true; break; }
-      }
-      if (!found) return;
-      for (let i = 0; i < count; i++) {
-        const d = new Date(first);
-        d.setDate(first.getDate() + i * 7 * interval);
-        targetDates.push(startDateStr(d));
+      const start0 = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+      const startSunday = new Date(start0);
+      startSunday.setDate(start0.getDate() - start0.getDay());
+      for (let w = 0; targetDates.length < count && w < 520; w += interval) {
+        const weekStart = new Date(startSunday);
+        weekStart.setDate(startSunday.getDate() + w * 7);
+        for (let dow = 0; dow <= 6 && targetDates.length < count; dow++) {
+          if (!(mask & (1 << dow))) continue;
+          const d = new Date(weekStart);
+          d.setDate(weekStart.getDate() + dow);
+          if (d < start0) continue;
+          targetDates.push(startDateStr(d));
+        }
       }
     } else if (task.FREQ === 'monthly' && task.MONTHLY_DAY) {
       const monthlyDay = Number(task.MONTHLY_DAY);

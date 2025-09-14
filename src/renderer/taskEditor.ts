@@ -37,7 +37,7 @@ function updateMonthlyDayState(ev?: Event) {
   const stRow = (document.getElementById('startTime')?.parentElement as HTMLElement | null);
   const mdRow = (document.getElementById('monthlyDay')?.parentElement as HTMLElement | null);
   const nthRow = (document.getElementById('monthlyNth')?.parentElement as HTMLElement | null);
-  const weeklyRow = (document.getElementById('weeklyDow')?.parentElement as HTMLElement | null);
+  const weeklyRow = (document.getElementById('weeklyDows')?.parentElement as HTMLElement | null);
   const rcRow = (document.getElementById('recurrenceCount')?.parentElement as HTMLElement | null);
   const dhRow = (document.getElementById('dailyHorizonDays')?.parentElement as HTMLElement | null);
   const ivRow = (document.getElementById('intervalDays')?.parentElement as HTMLElement | null);
@@ -64,12 +64,15 @@ function updateMonthlyDayState(ev?: Event) {
     }
   }
   // 毎週（曜日）の初期値補完
-  const weeklyDowEl = document.getElementById('weeklyDow') as HTMLSelectElement | null;
-  if (mode === 'weekly' && weeklyDowEl) {
-    if (!weeklyDowEl.value) {
+  const weeklyWrap = document.getElementById('weeklyDows') as HTMLDivElement | null;
+  if (mode === 'weekly' && weeklyWrap) {
+    const boxes = Array.from(weeklyWrap.querySelectorAll('input[type="checkbox"]')) as HTMLInputElement[];
+    const anyChecked = boxes.some(b => b.checked);
+    if (!anyChecked) {
       const sd = (el<HTMLInputElement>('startDate').value || '');
       const base = sd && /^\d{4}-\d{2}-\d{2}$/.test(sd) ? new Date(sd) : new Date();
-      weeklyDowEl.value = String(base.getDay());
+      const w = base.getDay();
+      boxes.forEach(b => { b.checked = (Number(b.value) === w); });
     }
   }
   if (rc) {
@@ -219,19 +222,17 @@ async function selectTask(id: number) {
   const iv = document.getElementById('intervalDays') as HTMLInputElement | null;
   if (iv) iv.value = String(Math.max(1, Number((t as any).INTERVAL || 1)));
   // weekly のUI初期化
-  const weeklyDowEl = document.getElementById('weeklyDow') as HTMLSelectElement | null;
-  if (weeklyDowEl) {
+  const weeklyWrap2 = document.getElementById('weeklyDows') as HTMLDivElement | null;
+  if (weeklyWrap2) {
     const w = Number((t as any).WEEKLY_DOWS || 0);
+    const boxes = Array.from(weeklyWrap2.querySelectorAll('input[type="checkbox"]')) as HTMLInputElement[];
     if (w > 0) {
-      // 単一ビットを想定
-      let dow = 0;
-      for (let i = 0; i <= 6; i++) { if (w & (1 << i)) { dow = i; break; } }
-      weeklyDowEl.value = String(dow);
+      boxes.forEach(b => { const i = Number(b.value); b.checked = !!(w & (1 << i)); });
     } else {
-      // 未設定なら開始日から推定
       const sd = (el<HTMLInputElement>('startDate').value || '').trim();
       const base = sd && /^\d{4}-\d{2}-\d{2}$/.test(sd) ? new Date(sd) : new Date();
-      weeklyDowEl.value = String(base.getDay());
+      const def = base.getDay();
+      boxes.forEach(b => { b.checked = (Number(b.value) === def); });
     }
   }
   const nthEl = document.getElementById('monthlyNth') as HTMLSelectElement | null;
@@ -311,14 +312,15 @@ async function onSave() {
         return { freq: 'monthly', monthlyDay: mdNum, count } as any;
       }
       if (mode === 'weekly') {
-        const weeklyDowEl = document.getElementById('weeklyDow') as HTMLSelectElement | null;
-        const dow = weeklyDowEl ? Number(weeklyDowEl.value) : NaN;
-        if (isNaN(dow) || dow < 0 || dow > 6) {
-          alert('「毎週（曜日）」を選択した場合は「曜日」を指定してください。');
+        const weeklyWrap = document.getElementById('weeklyDows') as HTMLDivElement | null;
+        const boxes = weeklyWrap ? Array.from(weeklyWrap.querySelectorAll('input[type="checkbox"]')) as HTMLInputElement[] : [];
+        let mask = 0;
+        for (const b of boxes) { if (b.checked) { const v = Number(b.value); if (v>=0 && v<=6) mask |= (1 << v); } }
+        if (mask === 0) {
+          alert('「毎週（曜日）」では少なくとも1つの曜日を選択してください。');
           return null;
         }
-        const weeklyDows = (1 << dow);
-        return { freq: 'weekly', weeklyDows, interval: 1, count } as any;
+        return { freq: 'weekly', weeklyDows: mask, interval: 1, count } as any;
       }
       if (mode === 'monthlyNth') {
         const nthEl = document.getElementById('monthlyNth') as HTMLSelectElement | null;
