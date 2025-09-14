@@ -16,6 +16,7 @@ type Task = {
   MONTHLY_DAY?: number | null;
   MONTHLY_NTH?: number | null;
   MONTHLY_NTH_DOW?: number | null;
+  YEARLY_MONTH?: number | null;
   COUNT?: number | null;
   HORIZON_DAYS?: number | null;
   WEEKLY_DOWS?: number | null;
@@ -28,7 +29,7 @@ let selectedId: number | null = null;
 let selectedTags: string[] = [];
 let allTagNames: string[] = [];
 function updateMonthlyDayState(ev?: Event) {
-  const mode = el<HTMLSelectElement>('isRecurring').value; // once | daily | weekly | everyNScheduled | everyNCompleted | monthly | monthlyNth
+  const mode = el<HTMLSelectElement>('isRecurring').value; // once | daily | weekly | everyNScheduled | everyNCompleted | monthly | monthlyNth | yearly
   const md = document.getElementById('monthlyDay') as HTMLInputElement | null;
   const rc = document.getElementById('recurrenceCount') as HTMLInputElement | null;
   const dh = document.getElementById('dailyHorizonDays') as HTMLInputElement | null;
@@ -36,6 +37,8 @@ function updateMonthlyDayState(ev?: Event) {
   const sdRow = (document.getElementById('startDate')?.parentElement as HTMLElement | null);
   const stRow = (document.getElementById('startTime')?.parentElement as HTMLElement | null);
   const mdRow = (document.getElementById('monthlyDay')?.parentElement as HTMLElement | null);
+  const ymRow = (document.getElementById('yearlyMonth')?.parentElement as HTMLElement | null);
+  const ydRow = (document.getElementById('yearlyDay')?.parentElement as HTMLElement | null);
   const nthRow = (document.getElementById('monthlyNth')?.parentElement as HTMLElement | null);
   const weeklyRow = (document.getElementById('weeklyDows')?.parentElement as HTMLElement | null);
   const rcRow = (document.getElementById('recurrenceCount')?.parentElement as HTMLElement | null);
@@ -75,11 +78,20 @@ function updateMonthlyDayState(ev?: Event) {
       boxes.forEach(b => { b.checked = (Number(b.value) === w); });
     }
   }
+  // 毎年（月日）の初期値補完
+  if (mode === 'yearly') {
+    const ym = document.getElementById('yearlyMonth') as HTMLSelectElement | null;
+    const yd = document.getElementById('yearlyDay') as HTMLInputElement | null;
+    const sd = (el<HTMLInputElement>('startDate').value || '');
+    const base = sd && /^\d{4}-\d{2}-\d{2}$/.test(sd) ? new Date(sd) : new Date();
+    if (ym && !ym.value) ym.value = String(base.getMonth() + 1);
+    if (yd && !yd.value) yd.value = String(base.getDate());
+  }
   if (rc) {
     const recurring = mode !== 'once';
     rc.disabled = !recurring;
     if (!recurring) rc.value = '1'; // 単発タスクは1固定
-    if (mode === 'daily' || mode === 'weekly' || mode === 'monthlyNth') rc.value = '0'; // 毎日/毎週/第n週m曜日は0=無限を推奨
+    if (mode === 'daily' || mode === 'weekly' || mode === 'monthlyNth' || mode === 'yearly') rc.value = '0'; // 年次も0=無限を推奨
     if (recurring && !rc.value) rc.value = '0'; // デフォルト0=無限
   }
   if (dh) {
@@ -101,13 +113,15 @@ function updateMonthlyDayState(ev?: Event) {
     if (!iv.value) iv.value = '2';
   }
   // 「毎月」選択時は開始日/開始時刻の行を非表示
-  const hideStart = (mode === 'monthly' || mode === 'monthlyNth');
+  const hideStart = (mode === 'monthly' || mode === 'monthlyNth' || mode === 'yearly');
   if (sdRow) sdRow.style.display = hideStart ? 'none' : '';
   if (stRow) stRow.style.display = hideStart ? 'none' : '';
   // 「１回のみ」選択時は「毎月の開始日」「第n曜日」「繰り返し回数」の行を非表示
-  if (mdRow) mdRow.style.display = (mode === 'once' || mode === 'monthlyNth' || mode === 'weekly') ? 'none' : '';
+  if (mdRow) mdRow.style.display = (mode === 'once' || mode === 'monthlyNth' || mode === 'weekly' || mode === 'yearly') ? 'none' : '';
   if (nthRow) nthRow.style.display = (mode === 'monthlyNth') ? '' : 'none';
   if (weeklyRow) weeklyRow.style.display = (mode === 'weekly') ? '' : 'none';
+  if (ymRow) ymRow.style.display = (mode === 'yearly') ? '' : 'none';
+  if (ydRow) ydRow.style.display = (mode === 'yearly') ? '' : 'none';
   if (rcRow) rcRow.style.display = (mode === 'once') ? 'none' : '';
   if (dhRow) dhRow.style.display = (mode === 'daily' || mode === 'everyNScheduled') ? '' : 'none';
   if (ivRow) ivRow.style.display = (mode === 'everyNScheduled' || mode === 'everyNCompleted') ? '' : 'none';
@@ -203,6 +217,9 @@ async function selectTask(id: number) {
       if ((t as any).MONTHLY_NTH !== null && typeof (t as any).MONTHLY_NTH !== 'undefined') return 'monthlyNth';
       return 'monthly';
     }
+    if (t.FREQ === 'yearly') {
+      return 'yearly';
+    }
     if (t.FREQ === 'weekly') {
       return 'weekly';
     }
@@ -243,6 +260,27 @@ async function selectTask(id: number) {
   if (rc) rc.value = String((t.IS_RECURRING ? (t.COUNT ?? 0) : 1));
   const dh = el<HTMLInputElement>('dailyHorizonDays');
   if (dh) dh.value = (t.FREQ === 'daily' && (t as any).INTERVAL_ANCHOR !== 'completed' ? String((t as any).HORIZON_DAYS ?? 14) : '14');
+  // yearly のUI初期化
+  const ym = document.getElementById('yearlyMonth') as HTMLSelectElement | null;
+  const yd = document.getElementById('yearlyDay') as HTMLInputElement | null;
+  if (ym) {
+    const v = Number((t as any).YEARLY_MONTH || 0);
+    if (v >= 1 && v <= 12) ym.value = String(v);
+    else {
+      const sd = (el<HTMLInputElement>('startDate').value || '').trim();
+      const base = sd && /^\d{4}-\d{2}-\d{2}$/.test(sd) ? new Date(sd) : new Date();
+      ym.value = String(base.getMonth() + 1);
+    }
+  }
+  if (yd) {
+    const v = Number((t as any).MONTHLY_DAY || 0);
+    if (v >= 1 && v <= 31) yd.value = String(v);
+    else {
+      const sd = (el<HTMLInputElement>('startDate').value || '').trim();
+      const base = sd && /^\d{4}-\d{2}-\d{2}$/.test(sd) ? new Date(sd) : new Date();
+      yd.value = String(base.getDate());
+    }
+  }
   renderListSelection();
   updateMonthlyDayState();
 }
@@ -332,6 +370,17 @@ async function onSave() {
           return null;
         }
         return { freq: 'monthlyNth', monthlyNth: nth, monthlyNthDow: dow, count } as any;
+      }
+      if (mode === 'yearly') {
+        const ym = document.getElementById('yearlyMonth') as HTMLSelectElement | null;
+        const yd = document.getElementById('yearlyDay') as HTMLInputElement | null;
+        const month = ym ? Number(ym.value) : NaN;
+        const day = yd ? Number(yd.value) : NaN;
+        if (!isFinite(month) || month < 1 || month > 12 || !isFinite(day) || day < 1 || day > 31) {
+          alert('「毎年（月日）」では「月」と「日」を正しく指定してください。');
+          return null;
+        }
+        return { freq: 'yearly', yearlyMonth: month, yearlyDay: day, count } as any;
       }
       return null;
     })()

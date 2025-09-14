@@ -66,6 +66,7 @@
               <option value="everyNCompleted">指定日数ごと（前回完了した日付から）</option>
               <option value="monthly">毎月（日付）</option>
               <option value="monthlyNth">第n週m曜日</option>
+              <option value="yearly">毎年（月日）</option>
             </select>
           </div>
           <div class="row"><label>曜日</label>
@@ -83,6 +84,23 @@
           <div class="row"><label for="startTime">開始時刻</label><input id="startTime" type="time" /></div>
           <div class="row"><label for="intervalDays">間隔（日）</label><input id="intervalDays" type="number" min="1" max="365" placeholder="例: 2" /></div>
           <div class="row"><label for="monthlyDay">毎月の開始日</label><input id="monthlyDay" type="number" min="1" max="31" placeholder="1..31" /></div>
+          <div class="row"><label for="yearlyMonth">毎年の月</label>
+            <select id="yearlyMonth">
+              <option value="1">1月</option>
+              <option value="2">2月</option>
+              <option value="3">3月</option>
+              <option value="4">4月</option>
+              <option value="5">5月</option>
+              <option value="6">6月</option>
+              <option value="7">7月</option>
+              <option value="8">8月</option>
+              <option value="9">9月</option>
+              <option value="10">10月</option>
+              <option value="11">11月</option>
+              <option value="12">12月</option>
+            </select>
+          </div>
+          <div class="row"><label for="yearlyDay">毎年の日</label><input id="yearlyDay" type="number" min="1" max="31" placeholder="1..31" /></div>
           <div class="row"><label for="monthlyNth">第n週</label>
             <select id="monthlyNth">
               <option value="1">第1</option>
