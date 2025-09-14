@@ -61,10 +61,22 @@
             <select id="isRecurring">
               <option value="once">１回のみ</option>
               <option value="daily">毎日</option>
+              <option value="weekly">毎週（曜日）</option>
               <option value="everyNScheduled">指定日数ごと（前回発生した日付から）</option>
               <option value="everyNCompleted">指定日数ごと（前回完了した日付から）</option>
               <option value="monthly">毎月（日付）</option>
               <option value="monthlyNth">第n週m曜日</option>
+            </select>
+          </div>
+          <div class="row"><label for="weeklyDow">曜日</label>
+            <select id="weeklyDow">
+              <option value="0">日曜日</option>
+              <option value="1">月曜日</option>
+              <option value="2">火曜日</option>
+              <option value="3">水曜日</option>
+              <option value="4">木曜日</option>
+              <option value="5">金曜日</option>
+              <option value="6">土曜日</option>
             </select>
           </div>
           <div class="row"><label for="startDate">開始日</label><input id="startDate" type="date" /></div>
