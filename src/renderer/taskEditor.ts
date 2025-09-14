@@ -1,33 +1,15 @@
 export {};
 
-type Task = {
-  ID?: number;
-  TITLE: string;
-  DESCRIPTION?: string | null;
-  TAGS?: string[];
-  DUE_AT?: string | null;
-  START_DATE?: string | null;
-  START_TIME?: string | null;
-  IS_RECURRING?: number;
-  // Recurrence rule (joined)
-  FREQ?: string | null;
-  INTERVAL?: number | null;
-  INTERVAL_ANCHOR?: string | null;
-  MONTHLY_DAY?: number | null;
-  MONTHLY_NTH?: number | null;
-  MONTHLY_NTH_DOW?: number | null;
-  COUNT?: number | null;
-  HORIZON_DAYS?: number | null;
-};
+import { TaskRow, formatDateInput, inferRecurrenceModeFromDb } from './sharedTaskEditor.js';
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
-let tasks: Task[] = [];
+let tasks: TaskRow[] = [];
 let selectedId: number | null = null;
 let selectedTags: string[] = [];
 let allTagNames: string[] = [];
 function updateMonthlyDayState(ev?: Event) {
-  const mode = el<HTMLSelectElement>('isRecurring').value; // once | daily | everyNScheduled | everyNCompleted | monthly | monthlyNth
+  const mode = el<HTMLSelectElement>('isRecurring').value; // once | daily | weekly | everyNScheduled | everyNCompleted | monthly | monthlyNth | yearly
   const md = document.getElementById('monthlyDay') as HTMLInputElement | null;
   const rc = document.getElementById('recurrenceCount') as HTMLInputElement | null;
   const dh = document.getElementById('dailyHorizonDays') as HTMLInputElement | null;
@@ -35,7 +17,10 @@ function updateMonthlyDayState(ev?: Event) {
   const sdRow = (document.getElementById('startDate')?.parentElement as HTMLElement | null);
   const stRow = (document.getElementById('startTime')?.parentElement as HTMLElement | null);
   const mdRow = (document.getElementById('monthlyDay')?.parentElement as HTMLElement | null);
+  const ymRow = (document.getElementById('yearlyMonth')?.parentElement as HTMLElement | null);
+  const ydRow = (document.getElementById('yearlyDay')?.parentElement as HTMLElement | null);
   const nthRow = (document.getElementById('monthlyNth')?.parentElement as HTMLElement | null);
+  const weeklyRow = (document.getElementById('weeklyDows')?.parentElement as HTMLElement | null);
   const rcRow = (document.getElementById('recurrenceCount')?.parentElement as HTMLElement | null);
   const dhRow = (document.getElementById('dailyHorizonDays')?.parentElement as HTMLElement | null);
   const ivRow = (document.getElementById('intervalDays')?.parentElement as HTMLElement | null);
@@ -61,11 +46,32 @@ function updateMonthlyDayState(ev?: Event) {
       dowEl.value = String(base.getDay());
     }
   }
+  // 毎週（曜日）の初期値補完
+  const weeklyWrap = document.getElementById('weeklyDows') as HTMLDivElement | null;
+  if (mode === 'weekly' && weeklyWrap) {
+    const boxes = Array.from(weeklyWrap.querySelectorAll('input[type="checkbox"]')) as HTMLInputElement[];
+    const anyChecked = boxes.some(b => b.checked);
+    if (!anyChecked) {
+      const sd = (el<HTMLInputElement>('startDate').value || '');
+      const base = sd && /^\d{4}-\d{2}-\d{2}$/.test(sd) ? new Date(sd) : new Date();
+      const w = base.getDay();
+      boxes.forEach(b => { b.checked = (Number(b.value) === w); });
+    }
+  }
+  // 毎年（月日）の初期値補完
+  if (mode === 'yearly') {
+    const ym = document.getElementById('yearlyMonth') as HTMLSelectElement | null;
+    const yd = document.getElementById('yearlyDay') as HTMLInputElement | null;
+    const sd = (el<HTMLInputElement>('startDate').value || '');
+    const base = sd && /^\d{4}-\d{2}-\d{2}$/.test(sd) ? new Date(sd) : new Date();
+    if (ym && !ym.value) ym.value = String(base.getMonth() + 1);
+    if (yd && !yd.value) yd.value = String(base.getDate());
+  }
   if (rc) {
     const recurring = mode !== 'once';
     rc.disabled = !recurring;
     if (!recurring) rc.value = '1'; // 単発タスクは1固定
-    if (mode === 'daily' || mode === 'monthlyNth') rc.value = '0'; // 毎日/第n週m曜日は0=無限を推奨
+    if (mode === 'daily' || mode === 'weekly' || mode === 'monthlyNth' || mode === 'yearly') rc.value = '0'; // 年次も0=無限を推奨
     if (recurring && !rc.value) rc.value = '0'; // デフォルト0=無限
   }
   if (dh) {
@@ -87,28 +93,21 @@ function updateMonthlyDayState(ev?: Event) {
     if (!iv.value) iv.value = '2';
   }
   // 「毎月」選択時は開始日/開始時刻の行を非表示
-  const hideStart = (mode === 'monthly' || mode === 'monthlyNth');
+  const hideStart = (mode === 'monthly' || mode === 'monthlyNth' || mode === 'yearly');
   if (sdRow) sdRow.style.display = hideStart ? 'none' : '';
   if (stRow) stRow.style.display = hideStart ? 'none' : '';
   // 「１回のみ」選択時は「毎月の開始日」「第n曜日」「繰り返し回数」の行を非表示
-  if (mdRow) mdRow.style.display = (mode === 'once' || mode === 'monthlyNth') ? 'none' : '';
+  if (mdRow) mdRow.style.display = (mode === 'once' || mode === 'monthlyNth' || mode === 'weekly' || mode === 'yearly') ? 'none' : '';
   if (nthRow) nthRow.style.display = (mode === 'monthlyNth') ? '' : 'none';
+  if (weeklyRow) weeklyRow.style.display = (mode === 'weekly') ? '' : 'none';
+  if (ymRow) ymRow.style.display = (mode === 'yearly') ? '' : 'none';
+  if (ydRow) ydRow.style.display = (mode === 'yearly') ? '' : 'none';
   if (rcRow) rcRow.style.display = (mode === 'once') ? 'none' : '';
   if (dhRow) dhRow.style.display = (mode === 'daily' || mode === 'everyNScheduled') ? '' : 'none';
   if (ivRow) ivRow.style.display = (mode === 'everyNScheduled' || mode === 'everyNCompleted') ? '' : 'none';
 }
 
-function formatDateInput(dateStr?: string | null): string {
-  if (!dateStr) return '';
-  // Accept YYYY-MM-DD or ISO
-  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return '';
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const da = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${da}`;
-}
+// formatDateInput は sharedTaskEditor.ts へ移動
 
 async function loadTasks(query = '') {
   tasks = await window.electronAPI.listTasks({ query });
@@ -173,7 +172,7 @@ function renderListSelection() {
 }
 
 async function selectTask(id: number) {
-  const t: Task = await window.electronAPI.getTask(id);
+  const t: TaskRow = await window.electronAPI.getTask(id);
   selectedId = id;
   el<HTMLInputElement>('taskId').value = String(t.ID || '');
   el<HTMLInputElement>('title').value = t.TITLE || '';
@@ -182,27 +181,27 @@ async function selectTask(id: number) {
   renderTagChips();
   el<HTMLInputElement>('dueAt').value = formatDateInput(t.DUE_AT);
   // Map DB values to UI mode
-  el<HTMLSelectElement>('isRecurring').value = ((): string => {
-    if (!t.IS_RECURRING) return 'once';
-    if (t.FREQ === 'monthly') {
-      if ((t as any).MONTHLY_NTH !== null && typeof (t as any).MONTHLY_NTH !== 'undefined') return 'monthlyNth';
-      return 'monthly';
-    }
-    if (t.FREQ === 'daily') {
-      const interval = Number((t as any).INTERVAL || 1);
-      const anchor = (t as any).INTERVAL_ANCHOR || 'scheduled';
-      if (anchor === 'completed') return 'everyNCompleted';
-      if (interval > 1) return 'everyNScheduled';
-      return 'daily';
-    }
-    return 'daily';
-  })();
+  el<HTMLSelectElement>('isRecurring').value = inferRecurrenceModeFromDb(t);
   el<HTMLInputElement>('startDate').value = formatDateInput(t.START_DATE);
   el<HTMLInputElement>('startTime').value = t.START_TIME || '';
   const md = el<HTMLInputElement>('monthlyDay');
   if (md) md.value = t.MONTHLY_DAY ? String(t.MONTHLY_DAY) : '';
   const iv = document.getElementById('intervalDays') as HTMLInputElement | null;
   if (iv) iv.value = String(Math.max(1, Number((t as any).INTERVAL || 1)));
+  // weekly のUI初期化
+  const weeklyWrap2 = document.getElementById('weeklyDows') as HTMLDivElement | null;
+  if (weeklyWrap2) {
+    const w = Number((t as any).WEEKLY_DOWS || 0);
+    const boxes = Array.from(weeklyWrap2.querySelectorAll('input[type="checkbox"]')) as HTMLInputElement[];
+    if (w > 0) {
+      boxes.forEach(b => { const i = Number(b.value); b.checked = !!(w & (1 << i)); });
+    } else {
+      const sd = (el<HTMLInputElement>('startDate').value || '').trim();
+      const base = sd && /^\d{4}-\d{2}-\d{2}$/.test(sd) ? new Date(sd) : new Date();
+      const def = base.getDay();
+      boxes.forEach(b => { b.checked = (Number(b.value) === def); });
+    }
+  }
   const nthEl = document.getElementById('monthlyNth') as HTMLSelectElement | null;
   const dowEl = document.getElementById('monthlyNthDow') as HTMLSelectElement | null;
   if (nthEl) nthEl.value = (t as any).MONTHLY_NTH != null ? String((t as any).MONTHLY_NTH) : (nthEl.value || '1');
@@ -211,12 +210,33 @@ async function selectTask(id: number) {
   if (rc) rc.value = String((t.IS_RECURRING ? (t.COUNT ?? 0) : 1));
   const dh = el<HTMLInputElement>('dailyHorizonDays');
   if (dh) dh.value = (t.FREQ === 'daily' && (t as any).INTERVAL_ANCHOR !== 'completed' ? String((t as any).HORIZON_DAYS ?? 14) : '14');
+  // yearly のUI初期化
+  const ym = document.getElementById('yearlyMonth') as HTMLSelectElement | null;
+  const yd = document.getElementById('yearlyDay') as HTMLInputElement | null;
+  if (ym) {
+    const v = Number((t as any).YEARLY_MONTH || 0);
+    if (v >= 1 && v <= 12) ym.value = String(v);
+    else {
+      const sd = (el<HTMLInputElement>('startDate').value || '').trim();
+      const base = sd && /^\d{4}-\d{2}-\d{2}$/.test(sd) ? new Date(sd) : new Date();
+      ym.value = String(base.getMonth() + 1);
+    }
+  }
+  if (yd) {
+    const v = Number((t as any).MONTHLY_DAY || 0);
+    if (v >= 1 && v <= 31) yd.value = String(v);
+    else {
+      const sd = (el<HTMLInputElement>('startDate').value || '').trim();
+      const base = sd && /^\d{4}-\d{2}-\d{2}$/.test(sd) ? new Date(sd) : new Date();
+      yd.value = String(base.getDate());
+    }
+  }
   renderListSelection();
   updateMonthlyDayState();
 }
 
 async function onSave() {
-  const mode = el<HTMLSelectElement>('isRecurring').value; // once | daily | everyNScheduled | everyNCompleted | monthly | monthlyNth
+  const mode = el<HTMLSelectElement>('isRecurring').value; // once | daily | weekly | everyNScheduled | everyNCompleted | monthly | monthlyNth
   const startDateInput = el<HTMLInputElement>('startDate').value || '';
   if (mode === 'daily' && !startDateInput) {
     alert('開始日は必須です（毎日）。開始日を入力してください。');
@@ -279,6 +299,17 @@ async function onSave() {
         }
         return { freq: 'monthly', monthlyDay: mdNum, count } as any;
       }
+      if (mode === 'weekly') {
+        const weeklyWrap = document.getElementById('weeklyDows') as HTMLDivElement | null;
+        const boxes = weeklyWrap ? Array.from(weeklyWrap.querySelectorAll('input[type="checkbox"]')) as HTMLInputElement[] : [];
+        let mask = 0;
+        for (const b of boxes) { if (b.checked) { const v = Number(b.value); if (v>=0 && v<=6) mask |= (1 << v); } }
+        if (mask === 0) {
+          alert('「毎週（曜日）」では少なくとも1つの曜日を選択してください。');
+          return null;
+        }
+        return { freq: 'weekly', weeklyDows: mask, interval: 1, count } as any;
+      }
       if (mode === 'monthlyNth') {
         const nthEl = document.getElementById('monthlyNth') as HTMLSelectElement | null;
         const dowEl = document.getElementById('monthlyNthDow') as HTMLSelectElement | null;
@@ -289,6 +320,17 @@ async function onSave() {
           return null;
         }
         return { freq: 'monthlyNth', monthlyNth: nth, monthlyNthDow: dow, count } as any;
+      }
+      if (mode === 'yearly') {
+        const ym = document.getElementById('yearlyMonth') as HTMLSelectElement | null;
+        const yd = document.getElementById('yearlyDay') as HTMLInputElement | null;
+        const month = ym ? Number(ym.value) : NaN;
+        const day = yd ? Number(yd.value) : NaN;
+        if (!isFinite(month) || month < 1 || month > 12 || !isFinite(day) || day < 1 || day > 31) {
+          alert('「毎年（月日）」では「月」と「日」を正しく指定してください。');
+          return null;
+        }
+        return { freq: 'yearly', yearlyMonth: month, yearlyDay: day, count } as any;
       }
       return null;
     })()

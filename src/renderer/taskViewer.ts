@@ -164,7 +164,7 @@ async function loadTasks(): Promise<void> {
       editBtn.style.cursor = 'pointer';
       editBtn.style.marginLeft = '8px';
       editBtn.style.fontSize = '12px';
-      editBtn.onclick = () => { window.location.href = `task-editor.html?id=${o.TASK_ID}`; };
+      editBtn.onclick = () => { window.location.href = `task-editor2.html?id=${o.TASK_ID}`; };
       titleRow.appendChild(titleSpan);
       titleRow.appendChild(editBtn);
       left.appendChild(titleRow);
