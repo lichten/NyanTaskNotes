@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data:;" />
+    <title>タスク編集（新） - NyanTaskNotes</title>
+    <style>
+      body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+      header { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid #ddd; }
+      main { display: grid; grid-template-columns: 420px 1fr; height: calc(100vh - 52px); }
+      #left { border-right: 1px solid #eee; padding: 16px; overflow: auto; }
+      #right { padding: 16px; overflow: auto; }
+      .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+      label { width: 120px; color: #333; }
+      input[type=text], input[type=date], input[type=time], input[type=number], select, textarea { flex: 1; padding: 6px 8px; }
+      textarea { min-height: 80px; }
+      .actions { display: flex; gap: 8px; }
+      h3 { margin-top: 20px; }
+      .pill { display:inline-block; padding:2px 8px; border-radius:12px; font-size:12px; }
+      .add { background:#e8f7ea; color:#0a7a1b; }
+      .del { background:#fde8e8; color:#b41111; }
+      .same { background:#f1f1f1; color:#555; }
+      .list { display:flex; flex-direction:column; gap:6px; }
+      .occ { display:flex; gap:8px; align-items:center; border-bottom:1px solid #f3f3f3; padding:6px 0; }
+      .meta { color:#666; font-size:12px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>タスク編集（新）</div>
+      <div class="actions">
+        <select id="previewRange">
+          <option value="8w">8週間</option>
+          <option value="6m">6ヶ月</option>
+          <option value="12m">12ヶ月</option>
+          <option value="2y">2年</option>
+        </select>
+        <button id="saveBtn">保存</button>
+        <button id="deleteBtn">削除</button>
+      </div>
+    </header>
+    <main>
+      <section id="left">
+        <form id="taskForm" onsubmit="return false;">
+          <input type="hidden" id="taskId" />
+          <div class="row"><label for="title">タイトル</label><input id="title" type="text" required /></div>
+          <div class="row"><label for="description">説明</label><textarea id="description"></textarea></div>
+          <div class="row"><label for="tags">タグ</label><input id="tags" type="text" placeholder="カンマ区切り" /></div>
+          <div class="row"><label for="dueAt">期日（単発）</label><input id="dueAt" type="date" /></div>
+          <h3>繰り返し</h3>
+          <div class="row"><label for="isRecurring">繰り返し</label>
+            <select id="isRecurring">
+              <option value="once">１回のみ</option>
+              <option value="daily">毎日</option>
+              <option value="everyNScheduled">指定日数ごと（前回発生した日付から）</option>
+              <option value="everyNCompleted">指定日数ごと（前回完了した日付から）</option>
+              <option value="weekly">毎週（曜日）</option>
+              <option value="monthly">毎月（日付）</option>
+              <option value="monthlyNth">第n週m曜日</option>
+              <option value="yearly">毎年（月日）</option>
+            </select>
+          </div>
+          <div class="row"><label for="startDate">開始日</label><input id="startDate" type="date" /></div>
+          <div class="row"><label for="startTime">開始時刻</label><input id="startTime" type="time" /></div>
+          <div class="row" id="rowInterval"><label for="intervalDays">間隔（日）</label><input id="intervalDays" type="number" min="1" max="365" placeholder="例: 2" /></div>
+          <div class="row" id="rowHorizon"><label for="dailyHorizonDays">生成日数（日次・発生基準）</label><input id="dailyHorizonDays" type="number" min="1" max="365" placeholder="例: 14" /></div>
+          <div class="row" id="rowMonthlyDay"><label for="monthlyDay">毎月の日</label><input id="monthlyDay" type="number" min="1" max="31" placeholder="1..31" /></div>
+          <div class="row" id="rowMonthlyNth"><label for="monthlyNth">第n週</label>
+            <select id="monthlyNth">
+              <option value="1">第1</option>
+              <option value="2">第2</option>
+              <option value="3">第3</option>
+              <option value="4">第4</option>
+              <option value="5">第5</option>
+              <option value="-1">最終</option>
+            </select>
+            <select id="monthlyNthDow" style="flex:1;">
+              <option value="0">日曜日</option>
+              <option value="1">月曜日</option>
+              <option value="2">火曜日</option>
+              <option value="3">水曜日</option>
+              <option value="4">木曜日</option>
+              <option value="5">金曜日</option>
+              <option value="6">土曜日</option>
+            </select>
+          </div>
+          <div class="row" id="rowWeekly"><label>曜日</label>
+            <div id="weeklyDows" style="display:flex; gap:8px; flex-wrap: wrap;">
+              <label><input type="checkbox" value="0"> 日</label>
+              <label><input type="checkbox" value="1"> 月</label>
+              <label><input type="checkbox" value="2"> 火</label>
+              <label><input type="checkbox" value="3"> 水</label>
+              <label><input type="checkbox" value="4"> 木</label>
+              <label><input type="checkbox" value="5"> 金</label>
+              <label><input type="checkbox" value="6"> 土</label>
+            </div>
+          </div>
+          <div class="row" id="rowYearlyMonth"><label for="yearlyMonth">毎年の月</label>
+            <select id="yearlyMonth">
+              <option value="1">1月</option>
+              <option value="2">2月</option>
+              <option value="3">3月</option>
+              <option value="4">4月</option>
+              <option value="5">5月</option>
+              <option value="6">6月</option>
+              <option value="7">7月</option>
+              <option value="8">8月</option>
+              <option value="9">9月</option>
+              <option value="10">10月</option>
+              <option value="11">11月</option>
+              <option value="12">12月</option>
+            </select>
+          </div>
+          <div class="row" id="rowYearlyDay"><label for="yearlyDay">毎年の日</label><input id="yearlyDay" type="number" min="1" max="31" placeholder="1..31" /></div>
+          <div class="row"><label for="recurrenceCount">繰り返し回数</label><input id="recurrenceCount" type="number" min="0" placeholder="0=無限, 1.." /></div>
+        </form>
+      </section>
+      <section id="right">
+        <div class="row" style="justify-content: space-between;">
+          <div class="meta">プレビュー（保存時の差分を表示）</div>
+          <label class="meta"><input type="checkbox" id="excludeDoneDeletes" /> 完了済みは削除しない</label>
+        </div>
+        <div id="preview">
+          <h3><span class="pill add">追加予定</span></h3>
+          <div id="listAdd" class="list"></div>
+          <h3><span class="pill del">削除予定</span></h3>
+          <div id="listDel" class="list"></div>
+          <h3><span class="pill same">変更なし</span></h3>
+          <div id="listSame" class="list"></div>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="js/taskEditor2.js"></script>
+  </body>
+  </html>
+

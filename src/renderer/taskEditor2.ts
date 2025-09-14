@@ -1,0 +1,426 @@
+import { TaskRow, RecurrenceUIMode, formatDateInput, inferRecurrenceModeFromDb, weeklyArrayFromMask, weeklyMaskFromArray } from './sharedTaskEditor.js';
+
+const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+
+type OccurrenceView = { date: string; time?: string | null; status?: string; };
+
+function clampMonthlyDate(year: number, monthIndex0: number, day: number): string {
+  const last = new Date(year, monthIndex0 + 1, 0).getDate();
+  const d = Math.min(Math.max(day, 1), last);
+  const dt = new Date(year, monthIndex0, d);
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, '0');
+  const da = String(dt.getDate()).padStart(2, '0');
+  return `${y}-${m}-${da}`;
+}
+
+function nthWeekdayOfMonth(year: number, monthIndex0: number, nth: number, dow: number): string {
+  const first = new Date(year, monthIndex0, 1);
+  const firstDow = first.getDay();
+  if (nth === -1) {
+    const lastDay = new Date(year, monthIndex0 + 1, 0).getDate();
+    const lastDate = new Date(year, monthIndex0, lastDay);
+    const lastDow = lastDate.getDay();
+    const diff = (lastDow - dow + 7) % 7;
+    const day = lastDay - diff;
+    const dt = new Date(year, monthIndex0, day);
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const da = String(dt.getDate()).padStart(2, '0');
+    return `${y}-${m}-${da}`;
+  }
+  const offset = (dow - firstDow + 7) % 7;
+  let day = 1 + offset + (nth - 1) * 7;
+  const last = new Date(year, monthIndex0 + 1, 0).getDate();
+  if (day > last) day -= 7;
+  const dt = new Date(year, monthIndex0, day);
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, '0');
+  const da = String(dt.getDate()).padStart(2, '0');
+  return `${y}-${m}-${da}`;
+}
+
+function getPreviewWindow(range: string): { from?: string; to?: string; weeksAhead?: number; monthsAhead?: number; yearsAhead?: number } {
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  const res: any = { from: todayStr };
+  if (range === '8w') {
+    const d = new Date(today); d.setDate(d.getDate() + 7*8);
+    res.to = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    res.weeksAhead = 8;
+  } else if (range === '6m') {
+    const d = new Date(today); d.setMonth(d.getMonth() + 6);
+    res.to = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    res.monthsAhead = 6;
+  } else if (range === '12m') {
+    const d = new Date(today); d.setMonth(d.getMonth() + 12);
+    res.to = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    res.monthsAhead = 12;
+  } else if (range === '2y') {
+    const d = new Date(today); d.setFullYear(d.getFullYear() + 2);
+    res.to = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    res.yearsAhead = 2;
+  }
+  return res;
+}
+
+function buildRecurrenceFromUI(): any {
+  const mode = (el<HTMLSelectElement>('isRecurring').value as RecurrenceUIMode);
+  const rcStr = (el<HTMLInputElement>('recurrenceCount').value || '').trim();
+  let count = rcStr ? Number(rcStr) : 0; if (!isFinite(count) || count < 0) count = 0;
+  if (mode === 'daily') {
+    const dhStr = (el<HTMLInputElement>('dailyHorizonDays').value || '').trim();
+    let horizonDays = dhStr ? Number(dhStr) : 14; if (!isFinite(horizonDays) || horizonDays <= 0) horizonDays = 14; if (horizonDays > 365) horizonDays = 365;
+    return { freq: 'daily', count, horizonDays, interval: 1, anchor: 'scheduled' };
+  }
+  if (mode === 'everyNScheduled' || mode === 'everyNCompleted') {
+    const ivStr = (el<HTMLInputElement>('intervalDays').value || '').trim();
+    let interval = ivStr ? Number(ivStr) : 2; if (!isFinite(interval) || interval < 1) interval = 1; if (interval > 365) interval = 365;
+    let horizonDays: number | undefined = undefined;
+    if (mode === 'everyNScheduled') {
+      const dhStr = (el<HTMLInputElement>('dailyHorizonDays').value || '').trim();
+      let h = dhStr ? Number(dhStr) : 14; if (!isFinite(h) || h <= 0) h = 14; if (h > 365) h = 365; horizonDays = h;
+    }
+    return { freq: 'daily', count, interval, anchor: (mode === 'everyNCompleted' ? 'completed' : 'scheduled'), horizonDays };
+  }
+  if (mode === 'weekly') {
+    const boxes = Array.from(el<HTMLDivElement>('weeklyDows').querySelectorAll('input[type="checkbox"]')) as HTMLInputElement[];
+    const dows: number[] = [];
+    boxes.forEach(b => { if (b.checked) dows.push(Number(b.value)); });
+    const weeklyDows = weeklyMaskFromArray(dows);
+    return { freq: 'weekly', weeklyDows, interval: 1, count };
+  }
+  if (mode === 'monthly') {
+    let mdNum: number | null = null;
+    const mdStr = (el<HTMLInputElement>('monthlyDay').value || '').trim();
+    if (mdStr) { const n = Number(mdStr); if (!isNaN(n) && n >= 1 && n <= 31) mdNum = n; }
+    if (mdNum == null) {
+      const sd = (el<HTMLInputElement>('startDate').value || '').trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(sd)) { const n = Number(sd.slice(8,10)); if (!isNaN(n) && n >= 1 && n <= 31) mdNum = n; }
+    }
+    return { freq: 'monthly', monthlyDay: mdNum ?? 1, count };
+  }
+  if (mode === 'monthlyNth') {
+    const nth = Number((el<HTMLSelectElement>('monthlyNth').value || '1'));
+    const dow = Number((el<HTMLSelectElement>('monthlyNthDow').value || '0'));
+    return { freq: 'monthlyNth', monthlyNth: nth, monthlyNthDow: dow, count };
+  }
+  if (mode === 'yearly') {
+    const month = Number((el<HTMLSelectElement>('yearlyMonth').value || '1'));
+    const day = Number((el<HTMLInputElement>('yearlyDay').value || '1'));
+    return { freq: 'yearly', yearlyMonth: month, yearlyDay: day, count };
+  }
+  return null;
+}
+
+function computeTargetDates(rec: any, startDateStr: string | null, options: { range: string }): string[] {
+  const today = new Date();
+  const res: string[] = [];
+  const startDate = startDateStr ? new Date(startDateStr) : new Date(today);
+  const rangeInfo = getPreviewWindow(options.range);
+  const addIfInRange = (d: Date) => {
+    const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    if (rangeInfo.from && ds < rangeInfo.from!) return;
+    if (rangeInfo.to && ds > rangeInfo.to!) return;
+    res.push(ds);
+  };
+
+  if (!rec || rec.freq === 'once') {
+    if (startDateStr) addIfInRange(startDate);
+    return res;
+  }
+
+  if (rec.freq === 'daily') {
+    const interval = Math.max(1, Number(rec.interval || 1));
+    const anchor = String(rec.anchor || 'scheduled');
+    const count = Number(rec.count || 0);
+    if (count >= 1 && anchor !== 'completed') {
+      for (let i = 0; i < count; i++) {
+        const d = new Date(startDate);
+        d.setDate(startDate.getDate() + i * interval);
+        addIfInRange(d);
+      }
+      return res;
+    }
+    if (anchor === 'completed') {
+      // プレビューは1件のみ（完了基準）
+      const d = new Date(today); d.setDate(d.getDate() + interval);
+      addIfInRange(d);
+      return res;
+    }
+    // infinite windowed
+    const horizon = Math.min(365, Math.max(1, Number(rec.horizonDays || 14)));
+    for (let i = 0; i < horizon; i++) {
+      const d = new Date(today); d.setDate(today.getDate() + i);
+      const diffDays = Math.floor((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate()).getTime())/(1000*60*60*24));
+      if (diffDays >= 0 && diffDays % interval === 0) addIfInRange(d);
+    }
+    return res;
+  }
+
+  if (rec.freq === 'weekly') {
+    const mask = Number(rec.weeklyDows || 0);
+    const count = Number(rec.count || 0);
+    const interval = Math.max(1, Number(rec.interval || 1));
+    const start0 = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+    const startSunday = new Date(start0); startSunday.setDate(start0.getDate() - start0.getDay());
+    if (count >= 1) {
+      let produced = 0;
+      for (let w = 0; w < 520 && produced < count; w += interval) {
+        const weekStart = new Date(startSunday); weekStart.setDate(startSunday.getDate() + w*7);
+        for (let dow = 0; dow <= 6 && produced < count; dow++) {
+          if (!(mask & (1 << dow))) continue;
+          const d = new Date(weekStart); d.setDate(weekStart.getDate() + dow);
+          if (d < start0) continue;
+          addIfInRange(d); produced++;
+        }
+      }
+      return res;
+    }
+    // infinite windowed (weeksAhead)
+    const weeksAhead = getPreviewWindow(options.range).weeksAhead ?? 8;
+    const today0 = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const sunday = new Date(today0); sunday.setDate(today0.getDate() - today0.getDay());
+    for (let w = 0; w < weeksAhead; w++) {
+      const weekStart = new Date(sunday); weekStart.setDate(sunday.getDate() + w*7);
+      for (let dow = 0; dow <= 6; dow++) {
+        if (!(mask & (1 << dow))) continue;
+        const d = new Date(weekStart); d.setDate(weekStart.getDate() + dow);
+        // interval alignment by week index relative to startSunday
+        const relWeeks = Math.floor((weekStart.getTime() - startSunday.getTime())/(1000*60*60*24*7));
+        if (relWeeks % interval !== 0) continue;
+        if (d < start0) continue;
+        addIfInRange(d);
+      }
+    }
+    return res;
+  }
+
+  if (rec.freq === 'monthly') {
+    const count = Number(rec.count || 0);
+    const md = Math.max(1, Math.min(31, Number(rec.monthlyDay || 1)));
+    if (count >= 1) {
+      let i = 0; while (res.length < count) {
+        const m0 = (startDate.getMonth() + i) % 12;
+        const y = startDate.getFullYear() + Math.floor((startDate.getMonth() + i)/12);
+        const dStr = clampMonthlyDate(y, m0, md);
+        const d = new Date(dStr);
+        if (d >= startDate) addIfInRange(d);
+        i++;
+      }
+      return res;
+    }
+    const monthsAhead = getPreviewWindow(options.range).monthsAhead ?? 6;
+    const now = new Date(); const startYear = now.getFullYear(); const startMonth0 = now.getMonth();
+    for (let i = 0; i < monthsAhead; i++) {
+      const m0 = (startMonth0 + i) % 12; const y = startYear + Math.floor((startMonth0 + i)/12);
+      const dStr = clampMonthlyDate(y, m0, md); addIfInRange(new Date(dStr));
+    }
+    return res;
+  }
+
+  if (rec.freq === 'monthlyNth') {
+    const nth = Number(rec.monthlyNth); const dow = Number(rec.monthlyNthDow);
+    const count = Number(rec.count || 0);
+    if (count >= 1) {
+      let i = 0; while (res.length < count) {
+        const m0 = (startDate.getMonth() + i) % 12; const y = startDate.getFullYear() + Math.floor((startDate.getMonth() + i)/12);
+        const dStr = nthWeekdayOfMonth(y, m0, nth, dow); const d = new Date(dStr);
+        if (d >= startDate) addIfInRange(d); i++;
+      }
+      return res;
+    }
+    const monthsAhead = getPreviewWindow(options.range).monthsAhead ?? 6;
+    const now = new Date(); const startYear = now.getFullYear(); const startMonth0 = now.getMonth();
+    for (let i = 0; i < monthsAhead; i++) {
+      const m0 = (startMonth0 + i) % 12; const y = startYear + Math.floor((startMonth0 + i)/12);
+      const dStr = nthWeekdayOfMonth(y, m0, nth, dow); addIfInRange(new Date(dStr));
+    }
+    return res;
+  }
+
+  if (rec.freq === 'yearly') {
+    const month = Math.max(1, Math.min(12, Number(rec.yearlyMonth || 1)));
+    const day = Math.max(1, Math.min(31, Number(rec.yearlyDay || 1)));
+    const count = Number(rec.count || 0);
+    if (count >= 1) {
+      let y = startDate.getFullYear();
+      let dStr = clampMonthlyDate(y, month-1, day);
+      if (new Date(dStr) < startDate) { y += 1; dStr = clampMonthlyDate(y, month-1, day); }
+      while (res.length < count) {
+        res.push(dStr); y += 1; dStr = clampMonthlyDate(y, month-1, day);
+      }
+      // filter by range
+      return res.filter(s => {
+        const d = new Date(s); const r = getPreviewWindow(options.range);
+        return (!r.from || s >= r.from) && (!r.to || s <= r.to);
+      });
+    }
+    const yearsAhead = getPreviewWindow(options.range).yearsAhead ?? 2;
+    const now = new Date(); const startYear = now.getFullYear();
+    for (let i = 0; i < yearsAhead; i++) {
+      const y = startYear + i; const dStr = clampMonthlyDate(y, month-1, day); addIfInRange(new Date(dStr));
+    }
+    return res;
+  }
+
+  return res;
+}
+
+function diffOccurrences(current: OccurrenceView[], target: string[], excludeDoneDeletes: boolean) {
+  const currentSet = new Map<string, OccurrenceView>();
+  current.forEach(o => currentSet.set(o.date, o));
+  const targetSet = new Set<string>(target);
+  const add: string[] = []; const del: OccurrenceView[] = []; const same: OccurrenceView[] = [];
+  for (const t of target) {
+    if (!currentSet.has(t)) add.push(t); else same.push(currentSet.get(t)!);
+  }
+  for (const c of current) {
+    if (!targetSet.has(c.date)) {
+      if (excludeDoneDeletes && c.status === 'done') continue;
+      del.push(c);
+    }
+  }
+  return { add, del, same };
+}
+
+function renderPreview(add: string[], del: OccurrenceView[], same: OccurrenceView[]) {
+  const listAdd = el<HTMLDivElement>('listAdd'); const listDel = el<HTMLDivElement>('listDel'); const listSame = el<HTMLDivElement>('listSame');
+  listAdd.innerHTML = ''; listDel.innerHTML = ''; listSame.innerHTML = '';
+  const row = (s: string, meta?: string) => {
+    const d = document.createElement('div'); d.className = 'occ';
+    const a = document.createElement('div'); a.textContent = s; d.appendChild(a);
+    if (meta) { const m = document.createElement('div'); m.className = 'meta'; m.textContent = meta; d.appendChild(m); }
+    return d;
+  };
+  add.sort().forEach(s => listAdd.appendChild(row(s)));
+  del.sort((a,b)=>a.date.localeCompare(b.date)).forEach(o => listDel.appendChild(row(o.date, o.status)));
+  same.sort((a,b)=>a.date.localeCompare(b.date)).forEach(o => listSame.appendChild(row(o.date, o.status)));
+}
+
+let currentTask: TaskRow | null = null;
+
+async function loadInitial(): Promise<void> {
+  // parse query
+  const params = new URLSearchParams(window.location.search);
+  const idStr = params.get('id');
+  if (idStr) {
+    const id = Number(idStr);
+    currentTask = await window.electronAPI.getTask(id);
+    if (currentTask) populateForm(currentTask);
+  } else {
+    // new mode
+    populateForm({ TITLE: '', IS_RECURRING: 0 } as any);
+  }
+  await refreshPreview();
+}
+
+function populateForm(t: TaskRow): void {
+  el<HTMLInputElement>('taskId').value = t.ID ? String(t.ID) : '';
+  el<HTMLInputElement>('title').value = t.TITLE || '';
+  el<HTMLTextAreaElement>('description').value = (t.DESCRIPTION as any) || '';
+  el<HTMLInputElement>('tags').value = (t.TAGS || []).join(', ');
+  el<HTMLInputElement>('dueAt').value = formatDateInput(t.DUE_AT);
+  const mode = inferRecurrenceModeFromDb(t);
+  el<HTMLSelectElement>('isRecurring').value = mode;
+  el<HTMLInputElement>('startDate').value = formatDateInput(t.START_DATE) || (() => {
+    const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  })();
+  el<HTMLInputElement>('startTime').value = t.START_TIME || '00:00';
+  // interval/horizon
+  el<HTMLInputElement>('dailyHorizonDays').value = (mode === 'daily' || mode === 'everyNScheduled') ? String((t as any).HORIZON_DAYS ?? 14) : '14';
+  el<HTMLInputElement>('intervalDays').value = String(Math.max(1, Number((t as any).INTERVAL || 1)));
+  el<HTMLInputElement>('monthlyDay').value = t.MONTHLY_DAY ? String(t.MONTHLY_DAY) : '';
+  el<HTMLSelectElement>('monthlyNth').value = (t as any).MONTHLY_NTH != null ? String((t as any).MONTHLY_NTH) : '1';
+  el<HTMLSelectElement>('monthlyNthDow').value = (t as any).MONTHLY_NTH_DOW != null ? String((t as any).MONTHLY_NTH_DOW) : '0';
+  el<HTMLSelectElement>('yearlyMonth').value = (t as any).YEARLY_MONTH != null ? String((t as any).YEARLY_MONTH) : String(new Date().getMonth()+1);
+  el<HTMLInputElement>('yearlyDay').value = t.MONTHLY_DAY ? String(t.MONTHLY_DAY) : String(new Date().getDate());
+  el<HTMLInputElement>('recurrenceCount').value = String((t.IS_RECURRING ? (t.COUNT ?? 0) : 1));
+  // weekly
+  const wMask = Number((t as any).WEEKLY_DOWS || 0);
+  const boxes = Array.from(el<HTMLDivElement>('weeklyDows').querySelectorAll('input[type="checkbox"]')) as HTMLInputElement[];
+  boxes.forEach(b => b.checked = false);
+  if (wMask > 0) { weeklyArrayFromMask(wMask).forEach(i => { const f = boxes.find(b => Number(b.value)===i); if (f) f.checked = true; }); }
+}
+
+async function fetchOccurrencesInRange(taskId: number, range: string): Promise<OccurrenceView[]> {
+  const r = getPreviewWindow(range);
+  const occ = await window.electronAPI.listOccurrences({ from: r.from, to: r.to });
+  return (occ as any[]).filter(o => Number(o.TASK_ID) === taskId).map(o => ({ date: o.SCHEDULED_DATE as string, time: o.SCHEDULED_TIME as string, status: o.OCC_STATUS as string }));
+}
+
+async function refreshPreview(): Promise<void> {
+  const range = (el<HTMLSelectElement>('previewRange').value || '8w');
+  const excludeDone = (el<HTMLInputElement>('excludeDoneDeletes').checked);
+  const taskIdStr = el<HTMLInputElement>('taskId').value;
+  const startDate = el<HTMLInputElement>('startDate').value || null;
+  const rec = buildRecurrenceFromUI();
+  const target = computeTargetDates(rec, startDate, { range });
+  const current: OccurrenceView[] = taskIdStr ? await fetchOccurrencesInRange(Number(taskIdStr), range) : [];
+  const diff = diffOccurrences(current, target, excludeDone);
+  renderPreview(diff.add, diff.del, diff.same);
+}
+
+let debounceTimer: any = null;
+function requestPreview() {
+  if (debounceTimer) clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(refreshPreview, 250);
+}
+
+async function onSave() {
+  const mode = (el<HTMLSelectElement>('isRecurring').value as RecurrenceUIMode);
+  const startDate = el<HTMLInputElement>('startDate').value || null;
+  const payload = {
+    title: el<HTMLInputElement>('title').value.trim(),
+    description: el<HTMLTextAreaElement>('description').value.trim() || null,
+    tags: (el<HTMLInputElement>('tags').value || '').split(',').map(s=>s.trim()).filter(Boolean),
+    dueAt: el<HTMLInputElement>('dueAt').value || null,
+    isRecurring: mode !== 'once',
+    startDate,
+    startTime: el<HTMLInputElement>('startTime').value || null,
+    recurrence: buildRecurrenceFromUI()
+  };
+  if (!payload.recurrence) payload.isRecurring = false;
+  // 確認: 削除予定にdoneが含まれる場合は警告
+  const range = (el<HTMLSelectElement>('previewRange').value || '8w');
+  const current: OccurrenceView[] = (el<HTMLInputElement>('taskId').value) ? await fetchOccurrencesInRange(Number(el<HTMLInputElement>('taskId').value), range) : [];
+  const target = computeTargetDates(payload.recurrence, startDate, { range });
+  const diff = diffOccurrences(current, target, false);
+  const doneDel = diff.del.filter(d => d.status === 'done').length;
+  if (doneDel > 0) {
+    const ok = confirm(`保存により削除予定 ${diff.del.length} 件のうち、完了済み ${doneDel} 件が削除されます。続行しますか？`);
+    if (!ok) return;
+  }
+  const idStr = el<HTMLInputElement>('taskId').value;
+  if (idStr) {
+    await window.electronAPI.updateTask(Number(idStr), payload);
+  } else {
+    const res = await window.electronAPI.createTask(payload);
+    if (res.success && res.id) el<HTMLInputElement>('taskId').value = String(res.id);
+  }
+  await refreshPreview();
+}
+
+async function onDelete() {
+  const idStr = el<HTMLInputElement>('taskId').value;
+  if (!idStr) return;
+  if (!confirm('このタスクを削除しますか？')) return;
+  await window.electronAPI.deleteTask(Number(idStr));
+  // クリア
+  populateForm({ TITLE: '', IS_RECURRING: 0 } as any);
+  await refreshPreview();
+}
+
+window.addEventListener('DOMContentLoaded', async () => {
+  // 変更時プレビュー
+  ['title','description','tags','dueAt','isRecurring','startDate','startTime','intervalDays','dailyHorizonDays','monthlyDay','monthlyNth','monthlyNthDow','yearlyMonth','yearlyDay','recurrenceCount','previewRange','excludeDoneDeletes']
+    .forEach(id => el<HTMLElement>(id)?.addEventListener('change', requestPreview));
+  // weekly checkboxes
+  Array.from(el<HTMLDivElement>('weeklyDows').querySelectorAll('input[type="checkbox"]')).forEach(b => b.addEventListener('change', requestPreview));
+
+  el<HTMLButtonElement>('saveBtn').addEventListener('click', onSave);
+  el<HTMLButtonElement>('deleteBtn').addEventListener('click', onDelete);
+
+  await loadInitial();
+});
+
