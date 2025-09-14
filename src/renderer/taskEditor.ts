@@ -1,30 +1,10 @@
 export {};
 
-type Task = {
-  ID?: number;
-  TITLE: string;
-  DESCRIPTION?: string | null;
-  TAGS?: string[];
-  DUE_AT?: string | null;
-  START_DATE?: string | null;
-  START_TIME?: string | null;
-  IS_RECURRING?: number;
-  // Recurrence rule (joined)
-  FREQ?: string | null;
-  INTERVAL?: number | null;
-  INTERVAL_ANCHOR?: string | null;
-  MONTHLY_DAY?: number | null;
-  MONTHLY_NTH?: number | null;
-  MONTHLY_NTH_DOW?: number | null;
-  YEARLY_MONTH?: number | null;
-  COUNT?: number | null;
-  HORIZON_DAYS?: number | null;
-  WEEKLY_DOWS?: number | null;
-};
+import { TaskRow, formatDateInput, inferRecurrenceModeFromDb } from './sharedTaskEditor.js';
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
-let tasks: Task[] = [];
+let tasks: TaskRow[] = [];
 let selectedId: number | null = null;
 let selectedTags: string[] = [];
 let allTagNames: string[] = [];
@@ -127,17 +107,7 @@ function updateMonthlyDayState(ev?: Event) {
   if (ivRow) ivRow.style.display = (mode === 'everyNScheduled' || mode === 'everyNCompleted') ? '' : 'none';
 }
 
-function formatDateInput(dateStr?: string | null): string {
-  if (!dateStr) return '';
-  // Accept YYYY-MM-DD or ISO
-  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return '';
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const da = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${da}`;
-}
+// formatDateInput は sharedTaskEditor.ts へ移動
 
 async function loadTasks(query = '') {
   tasks = await window.electronAPI.listTasks({ query });
@@ -202,7 +172,7 @@ function renderListSelection() {
 }
 
 async function selectTask(id: number) {
-  const t: Task = await window.electronAPI.getTask(id);
+  const t: TaskRow = await window.electronAPI.getTask(id);
   selectedId = id;
   el<HTMLInputElement>('taskId').value = String(t.ID || '');
   el<HTMLInputElement>('title').value = t.TITLE || '';
@@ -211,27 +181,7 @@ async function selectTask(id: number) {
   renderTagChips();
   el<HTMLInputElement>('dueAt').value = formatDateInput(t.DUE_AT);
   // Map DB values to UI mode
-  el<HTMLSelectElement>('isRecurring').value = ((): string => {
-    if (!t.IS_RECURRING) return 'once';
-    if (t.FREQ === 'monthly') {
-      if ((t as any).MONTHLY_NTH !== null && typeof (t as any).MONTHLY_NTH !== 'undefined') return 'monthlyNth';
-      return 'monthly';
-    }
-    if (t.FREQ === 'yearly') {
-      return 'yearly';
-    }
-    if (t.FREQ === 'weekly') {
-      return 'weekly';
-    }
-    if (t.FREQ === 'daily') {
-      const interval = Number((t as any).INTERVAL || 1);
-      const anchor = (t as any).INTERVAL_ANCHOR || 'scheduled';
-      if (anchor === 'completed') return 'everyNCompleted';
-      if (interval > 1) return 'everyNScheduled';
-      return 'daily';
-    }
-    return 'daily';
-  })();
+  el<HTMLSelectElement>('isRecurring').value = inferRecurrenceModeFromDb(t);
   el<HTMLInputElement>('startDate').value = formatDateInput(t.START_DATE);
   el<HTMLInputElement>('startTime').value = t.START_TIME || '';
   const md = el<HTMLInputElement>('monthlyDay');
