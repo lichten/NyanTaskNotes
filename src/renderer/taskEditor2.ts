@@ -519,6 +519,23 @@ async function refreshLogs(): Promise<void> {
       meta.textContent = `${r.KIND || r.kind} (${r.SOURCE || r.source})`;
       item.appendChild(when);
       item.appendChild(meta);
+      // 追加情報: occ.complete(user) のとき DETAILS.comment があれば表示
+      const kind = String(r.KIND || r.kind || '');
+      const source = String(r.SOURCE || r.source || '');
+      const detailsStr = (r.DETAILS || r.details || '') as string;
+      if (kind === 'occ.complete' && source === 'user' && detailsStr) {
+        try {
+          const details = JSON.parse(detailsStr);
+          if (details && typeof details.comment === 'string' && details.comment.trim().length > 0) {
+            const extra = document.createElement('div');
+            extra.className = 'meta';
+            extra.textContent = `コメント: ${details.comment}`;
+            item.appendChild(extra);
+          }
+        } catch {
+          // ignore JSON parse errors silently
+        }
+      }
       logsList.appendChild(item);
     }
   } catch {
