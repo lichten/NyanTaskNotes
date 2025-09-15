@@ -148,18 +148,21 @@ export function registerTaskIpcHandlers(opts: {
     const win = new BrowserWindow({
       width: 420,
       height: 200,
+      useContentSize: true,
       parent,
       modal: true,
       show: false,
       resizable: false,
       minimizable: false,
       maximizable: false,
+      autoHideMenuBar: true,
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
         preload: path.join(__dirname, 'preload.js')
       }
     });
+    try { win.setMenuBarVisibility(false); } catch {}
     const urlOpts: any = { query: { ...opts, requestId } };
     await win.loadFile('prompt.html', urlOpts);
     return await new Promise<string | null>((resolve) => {
