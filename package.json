@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "electron-log": "^5.0.0",
+    "electron-prompt": "^1.7.0",
     "electron-store": "^8.0.0",
     "sqlite3": "^5.1.7"
   },

@@ -5,3 +5,6 @@ node_modules/
 *.sqlite
 *.db
 
+# Local scratch and PR notes
+.tmp/
+pr.md

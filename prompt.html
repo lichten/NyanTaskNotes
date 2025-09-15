@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';" />
+    <title>入力</title>
+    <style>
+      body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+      main { padding: 16px; display: grid; gap: 10px; }
+      label { color: #333; }
+      input[type=text] { padding: 8px; }
+      .actions { display:flex; gap: 8px; justify-content: flex-end; }
+      button { padding: 6px 12px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div id="title" style="font-weight:600; font-size:14px;">入力</div>
+      <label id="label" for="value">入力</label>
+      <input id="value" type="text" />
+      <div class="actions">
+        <button id="cancelBtn">キャンセル</button>
+        <button id="okBtn">OK</button>
+      </div>
+    </main>
+    <script type="module" src="js/prompt.js"></script>
+  </body>
+  </html>
+

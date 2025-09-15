@@ -61,6 +61,45 @@ export class TaskDatabase {
     if (!hasYearlyMonth) {
       await this.run("ALTER TABLE RECURRENCE_RULES ADD COLUMN YEARLY_MONTH INTEGER");
     }
+    // TASK_EVENTS: ensure table and indexes exist
+    await this.run(
+      `CREATE TABLE IF NOT EXISTS TASK_EVENTS (
+        ID INTEGER PRIMARY KEY AUTOINCREMENT,
+        CREATED_AT TEXT NOT NULL,
+        KIND TEXT NOT NULL,
+        SOURCE TEXT NOT NULL CHECK(SOURCE IN ('user','system')),
+        TASK_ID INTEGER,
+        OCCURRENCE_ID INTEGER,
+        DETAILS TEXT,
+        FOREIGN KEY (TASK_ID) REFERENCES TASKS(ID) ON DELETE SET NULL,
+        FOREIGN KEY (OCCURRENCE_ID) REFERENCES TASK_OCCURRENCES(ID) ON DELETE SET NULL
+      )`
+    );
+    await this.run(`CREATE INDEX IF NOT EXISTS IDX_TASK_EVENTS_TASK_CREATED ON TASK_EVENTS (TASK_ID, CREATED_AT)`);
+    await this.run(`CREATE INDEX IF NOT EXISTS IDX_TASK_EVENTS_OCC ON TASK_EVENTS (OCCURRENCE_ID)`);
+    await this.run(`CREATE INDEX IF NOT EXISTS IDX_TASK_EVENTS_KIND_CREATED ON TASK_EVENTS (KIND, CREATED_AT)`);
+
+    // TASKS: REQUIRE_COMPLETE_COMMENT
+    const tcols: Array<{ name: string }> = await this.all<any>("PRAGMA table_info('TASKS')");
+    const hasReqComment = tcols.some(c => String(c.name).toUpperCase() === 'REQUIRE_COMPLETE_COMMENT');
+    if (!hasReqComment) {
+      await this.run("ALTER TABLE TASKS ADD COLUMN REQUIRE_COMPLETE_COMMENT INTEGER NOT NULL DEFAULT 0");
+    }
+  }
+
+  private async logEvent(kind: string, source: 'user' | 'system', taskId?: number | null, occurrenceId?: number | null, details?: any): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+    const now = this.nowIso();
+    let detailsStr: string | null = null;
+    try {
+      if (typeof details !== 'undefined') detailsStr = JSON.stringify(details);
+    } catch {
+      detailsStr = null;
+    }
+    await this.run(
+      `INSERT INTO TASK_EVENTS (CREATED_AT, KIND, SOURCE, TASK_ID, OCCURRENCE_ID, DETAILS) VALUES (?, ?, ?, ?, ?, ?)`,
+      [now, kind, source, taskId ?? null, occurrenceId ?? null, detailsStr]
+    );
   }
 
   getDb(): sqlite3.Database | null {
@@ -154,11 +193,12 @@ export class TaskDatabase {
           );
           if (!exists) {
             const nowIso = this.nowIso();
-            await this.run(
+            const newId = await this.run(
               `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
                VALUES (?, ?, ?, 'pending', ?, ?)`,
               [t.TASK_ID, scheduledDate, t.START_TIME || null, nowIso, nowIso]
             );
+            try { await this.logEvent('occ.autocreate', 'system', t.TASK_ID, newId, { reason: 'monthly.ensure.count', date: scheduledDate }); } catch {}
           }
           // Stop once we ensured up to COUNT future dates exist (we don't delete here)
           const ensured = await this.get<any>(`SELECT COUNT(1) AS C FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE >= ?`, [t.TASK_ID, t.START_DATE]);
@@ -177,11 +217,12 @@ export class TaskDatabase {
           );
           if (!exists) {
             const nowIso = this.nowIso();
-            await this.run(
+            const newId = await this.run(
               `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
                VALUES (?, ?, ?, 'pending', ?, ?)`,
               [t.TASK_ID, scheduledDate, t.START_TIME || null, nowIso, nowIso]
             );
+            try { await this.logEvent('occ.autocreate', 'system', t.TASK_ID, newId, { reason: 'monthly.ensure.window', date: scheduledDate }); } catch {}
           }
         }
       }
@@ -211,11 +252,12 @@ export class TaskDatabase {
           const exists = await this.get<any>(`SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?`, [t.TASK_ID, scheduledDate]);
           if (!exists) {
             const nowIso = this.nowIso();
-            await this.run(
+            const newId = await this.run(
               `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
                VALUES (?, ?, ?, 'pending', ?, ?)`,
-              [t.TASK_ID, scheduledDate, t.START_TIME || null, nowIso, nowIso]
-            );
+               [t.TASK_ID, scheduledDate, t.START_TIME || null, nowIso, nowIso]
+              );
+            try { await this.logEvent('occ.autocreate', 'system', t.TASK_ID, newId, { reason: 'weekly.ensure.count', date: scheduledDate }); } catch {}
           }
           const ensured = await this.get<any>(`SELECT COUNT(1) AS C FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE >= ?`, [t.TASK_ID, t.START_DATE]);
           if (ensured && Number(ensured.C) >= count) break;
@@ -229,11 +271,12 @@ export class TaskDatabase {
           const exists = await this.get<any>(`SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?`, [t.TASK_ID, scheduledDate]);
           if (!exists) {
             const nowIso = this.nowIso();
-            await this.run(
+            const newId = await this.run(
               `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
                VALUES (?, ?, ?, 'pending', ?, ?)`,
               [t.TASK_ID, scheduledDate, t.START_TIME || null, nowIso, nowIso]
             );
+            try { await this.logEvent('occ.autocreate', 'system', t.TASK_ID, newId, { reason: 'monthlyNth.ensure.count', date: scheduledDate }); } catch {}
           }
         }
       }
@@ -272,11 +315,12 @@ export class TaskDatabase {
           const exists = await this.get<any>(`SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?`, [t.TASK_ID, s]);
           if (!exists) {
             const nowIso = this.nowIso();
-            await this.run(
+            const newId = await this.run(
               `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
                VALUES (?, ?, ?, 'pending', ?, ?)`,
               [t.TASK_ID, s, t.START_TIME || null, nowIso, nowIso]
             );
+            try { await this.logEvent('occ.autocreate', 'system', t.TASK_ID, newId, { reason: 'yearly.ensure.count', date: s }); } catch {}
           }
           produced++;
         }
@@ -288,11 +332,12 @@ export class TaskDatabase {
           const exists = await this.get<any>(`SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?`, [t.TASK_ID, scheduled]);
           if (!exists) {
             const nowIso = this.nowIso();
-            await this.run(
+            const newId = await this.run(
               `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
                VALUES (?, ?, ?, 'pending', ?, ?)`,
               [t.TASK_ID, scheduled, t.START_TIME || null, nowIso, nowIso]
             );
+            try { await this.logEvent('occ.autocreate', 'system', t.TASK_ID, newId, { reason: 'yearly.ensure.window', date: scheduled }); } catch {}
           }
         }
       }
@@ -336,11 +381,12 @@ export class TaskDatabase {
           );
           if (!exists) {
             const nowIso = this.nowIso();
-            await this.run(
+            const newId = await this.run(
               `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
                VALUES (?, ?, ?, 'pending', ?, ?)`,
               [t.TASK_ID, scheduledDate, t.START_TIME || null, nowIso, nowIso]
             );
+            try { await this.logEvent('occ.autocreate', 'system', t.TASK_ID, newId, { reason: 'monthlyNth.ensure.window', date: scheduledDate }); } catch {}
           }
         }
       } else {
@@ -362,11 +408,12 @@ export class TaskDatabase {
           );
           if (!exists) {
             const nowIso = this.nowIso();
-            await this.run(
+            const newId = await this.run(
               `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
                VALUES (?, ?, ?, 'pending', ?, ?)`,
               [t.TASK_ID, scheduledDate, t.START_TIME || null, nowIso, nowIso]
             );
+            try { await this.logEvent('occ.autocreate', 'system', t.TASK_ID, newId, { reason: 'daily.ensure.count', date: scheduledDate }); } catch {}
           }
         }
       }
@@ -410,11 +457,12 @@ export class TaskDatabase {
             const exists = await this.get<any>(`SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?`, [t.TASK_ID, scheduledDate]);
             if (!exists) {
               const nowIso = this.nowIso();
-              await this.run(
+              const newId = await this.run(
                 `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
                  VALUES (?, ?, ?, 'pending', ?, ?)`,
                 [t.TASK_ID, scheduledDate, t.START_TIME || null, nowIso, nowIso]
               );
+              try { await this.logEvent('occ.autocreate', 'system', t.TASK_ID, newId, { reason: 'weekly.ensure.window', date: scheduledDate }); } catch {}
             }
             produced++;
           }
@@ -439,14 +487,15 @@ export class TaskDatabase {
             if (weeksDiff % interval !== 0) continue;
             const scheduledDate = dateStr(d);
             const exists = await this.get<any>(`SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?`, [t.TASK_ID, scheduledDate]);
-            if (!exists) {
-              const nowIso = this.nowIso();
-              await this.run(
-                `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
-                 VALUES (?, ?, ?, 'pending', ?, ?)`,
-                [t.TASK_ID, scheduledDate, t.START_TIME || null, nowIso, nowIso]
-              );
-            }
+          if (!exists) {
+            const nowIso = this.nowIso();
+            const newId = await this.run(
+              `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
+               VALUES (?, ?, ?, 'pending', ?, ?)`,
+              [t.TASK_ID, scheduledDate, t.START_TIME || null, nowIso, nowIso]
+            );
+            try { await this.logEvent('occ.autocreate', 'system', t.TASK_ID, newId, { reason: 'daily.ensure.window', date: scheduledDate }); } catch {}
+          }
           }
         }
       }
@@ -506,11 +555,12 @@ export class TaskDatabase {
       const exists = await this.get<any>(`SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?`, [t.TASK_ID, nextDate]);
       if (!exists) {
         const nowIso = this.nowIso();
-        await this.run(
+        const newId = await this.run(
           `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
            VALUES (?, ?, ?, 'pending', ?, ?)`,
           [t.TASK_ID, nextDate, t.START_TIME || null, nowIso, nowIso]
         );
+        try { await this.logEvent('occ.autocreate', 'system', t.TASK_ID, newId, { reason: 'daily.completed.ensure', date: nextDate }); } catch {}
       }
     }
   }
@@ -614,6 +664,7 @@ export class TaskDatabase {
     for (const e of existing) {
       if (!targetDates.includes(e.SCHEDULED_DATE)) {
         await this.run(`DELETE FROM TASK_OCCURRENCES WHERE ID = ?`, [e.ID]);
+        try { await this.logEvent('occ.delete', 'system', taskId, e.ID, { reason: 'reconcile.remove', date: e.SCHEDULED_DATE, status: e.STATUS }); } catch {}
       }
     }
 
@@ -621,11 +672,12 @@ export class TaskDatabase {
     const nowIso = this.nowIso();
     for (const d of targetDates) {
       if (!existingByDate.has(d)) {
-        await this.run(
+        const newId = await this.run(
           `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
            VALUES (?, ?, ?, 'pending', ?, ?)`,
           [taskId, d, task.START_TIME || null, nowIso, nowIso]
         );
+        try { await this.logEvent('occ.autocreate', 'system', taskId, newId, { reason: 'reconcile.add', date: d }); } catch {}
       }
     }
   }
@@ -679,7 +731,7 @@ export class TaskDatabase {
     if (params.query) { where.push('(T.TITLE LIKE ? OR T.DESCRIPTION LIKE ?)'); binds.push(`%${params.query}%`, `%${params.query}%`); }
     const sql = `SELECT O.ID AS OCCURRENCE_ID, O.SCHEDULED_DATE, O.SCHEDULED_TIME, O.STATUS AS OCC_STATUS, O.COMPLETED_AT,
                         T.ID AS TASK_ID, T.TITLE, T.DESCRIPTION,
-                        T.START_DATE, T.START_TIME, T.IS_RECURRING,
+                        T.START_DATE, T.START_TIME, T.IS_RECURRING, T.REQUIRE_COMPLETE_COMMENT,
                         R.FREQ, R.MONTHLY_DAY, R.COUNT
                  FROM TASK_OCCURRENCES O
                  JOIN TASKS T ON T.ID = O.TASK_ID
@@ -689,7 +741,7 @@ export class TaskDatabase {
     return this.all<any>(sql, binds);
   }
 
-  async completeOccurrence(occurrenceId: number): Promise<void> {
+  async completeOccurrence(occurrenceId: number, options: { comment?: string } = {}): Promise<void> {
     const now = this.nowIso();
     const occ = await this.get<any>(
       `SELECT O.ID, O.TASK_ID, O.SCHEDULED_DATE, T.START_DATE, T.START_TIME,
@@ -702,7 +754,14 @@ export class TaskDatabase {
        WHERE O.ID = ?`, [occurrenceId]
     );
     if (!occ) return;
+    const prevStatus = 'pending';
     await this.run(`UPDATE TASK_OCCURRENCES SET STATUS = 'done', COMPLETED_AT = ?, UPDATED_AT = ? WHERE ID = ?`, [now, now, occurrenceId]);
+    // Log: occ.complete (user)
+    try {
+      const details: any = { from: prevStatus, to: 'done', completedAt: now };
+      if (options && typeof options.comment !== 'undefined') details.comment = options.comment;
+      await this.logEvent('occ.complete', 'user', Number(occ.TASK_ID), occurrenceId, details);
+    } catch {}
     // Generate next occurrence for recurring tasks
     if (occ.FREQ === 'monthly' && occ.MONTHLY_DAY && (!occ.COUNT || Number(occ.COUNT) === 0)) {
       const d = new Date(occ.SCHEDULED_DATE as string);
@@ -711,11 +770,12 @@ export class TaskDatabase {
       const nextDate = this.clampMonthlyDate(nextYear, nextMonth0, Number(occ.MONTHLY_DAY));
       const exists = await this.get<any>(`SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?`, [occ.TASK_ID, nextDate]);
       if (!exists) {
-        await this.run(
+        const newId = await this.run(
           `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
            VALUES (?, ?, ?, 'pending', ?, ?)`,
           [occ.TASK_ID, nextDate, occ.START_TIME || null, now, now]
         );
+        try { await this.logEvent('occ.autocreate', 'system', Number(occ.TASK_ID), newId, { reason: 'complete.next.monthlyDay', date: nextDate }); } catch {}
       }
     } else if (occ.FREQ === 'monthly' && occ.MONTHLY_NTH != null && occ.MONTHLY_NTH_DOW != null && (!occ.COUNT || Number(occ.COUNT) === 0)) {
       const d = new Date(occ.SCHEDULED_DATE as string);
@@ -724,11 +784,12 @@ export class TaskDatabase {
       const nextDate = this.nthWeekdayOfMonth(nextYear, nextMonth0, Number(occ.MONTHLY_NTH), Number(occ.MONTHLY_NTH_DOW));
       const exists = await this.get<any>(`SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?`, [occ.TASK_ID, nextDate]);
       if (!exists) {
-        await this.run(
+        const newId = await this.run(
           `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
            VALUES (?, ?, ?, 'pending', ?, ?)`,
           [occ.TASK_ID, nextDate, occ.START_TIME || null, now, now]
         );
+        try { await this.logEvent('occ.autocreate', 'system', Number(occ.TASK_ID), newId, { reason: 'complete.next.monthlyNth', date: nextDate }); } catch {}
       }
     } else if (occ.FREQ === 'weekly' && (!occ.COUNT || Number(occ.COUNT) === 0)) {
       const interval = Math.max(1, Number((occ as any).INTERVAL || 1));
@@ -737,11 +798,12 @@ export class TaskDatabase {
       const nextDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       const exists = await this.get<any>(`SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?`, [occ.TASK_ID, nextDate]);
       if (!exists) {
-        await this.run(
+        const newId = await this.run(
           `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
            VALUES (?, ?, ?, 'pending', ?, ?)`,
           [occ.TASK_ID, nextDate, occ.START_TIME || null, now, now]
         );
+        try { await this.logEvent('occ.autocreate', 'system', Number(occ.TASK_ID), newId, { reason: 'complete.next.weekly', date: nextDate }); } catch {}
       }
     } else if (occ.FREQ === 'yearly' && (!occ.COUNT || Number(occ.COUNT) === 0)) {
       const month = Math.max(1, Math.min(12, Number((occ as any).YEARLY_MONTH || 0)));
@@ -751,11 +813,12 @@ export class TaskDatabase {
         const nextDate = this.clampMonthlyDate(d.getFullYear() + 1, month - 1, day);
         const exists = await this.get<any>(`SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?`, [occ.TASK_ID, nextDate]);
         if (!exists) {
-          await this.run(
+          const newId = await this.run(
             `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
              VALUES (?, ?, ?, 'pending', ?, ?)`,
             [occ.TASK_ID, nextDate, occ.START_TIME || null, now, now]
           );
+          try { await this.logEvent('occ.autocreate', 'system', Number(occ.TASK_ID), newId, { reason: 'complete.next.yearly', date: nextDate }); } catch {}
         }
       }
     } else if (occ.FREQ === 'daily' && (!occ.COUNT || Number(occ.COUNT) === 0)) {
@@ -773,11 +836,12 @@ export class TaskDatabase {
       }
       const exists = await this.get<any>(`SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?`, [occ.TASK_ID, nextDate]);
       if (!exists) {
-        await this.run(
+        const newId = await this.run(
           `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
            VALUES (?, ?, ?, 'pending', ?, ?)`,
           [occ.TASK_ID, nextDate, occ.START_TIME || null, now, now]
         );
+        try { await this.logEvent('occ.autocreate', 'system', Number(occ.TASK_ID), newId, { reason: 'complete.next.daily', date: nextDate, anchor: (occ as any).INTERVAL_ANCHOR }); } catch {}
       }
     }
   }
@@ -872,6 +936,21 @@ export class TaskDatabase {
     return rows.map(r => r.NAME as string);
   }
 
+  async listTaskEvents(params: { taskId: number; limit?: number }): Promise<any[]> {
+    const taskId = Number(params.taskId);
+    const limit = Math.max(1, Math.min(100, Number(params.limit ?? 10)));
+    const rows = await this.all<any>(
+      `SELECT ID, CREATED_AT, KIND, SOURCE, TASK_ID, OCCURRENCE_ID, DETAILS
+       FROM TASK_EVENTS
+       WHERE TASK_ID = ?
+       ORDER BY CREATED_AT DESC, ID DESC
+       LIMIT ?`,
+      [taskId, limit]
+    );
+    // Optionally parse JSON DETAILS here; keep as text for flexibility in renderer
+    return rows;
+  }
+
   async createTask(payload: any): Promise<number> {
     const now = this.nowIso();
     const p = {
@@ -880,7 +959,8 @@ export class TaskDatabase {
       due_at: payload.dueAt || null,
       start_date: payload.startDate || null,
       start_time: payload.startTime || null,
-      is_recurring: payload.isRecurring ? 1 : 0
+      is_recurring: payload.isRecurring ? 1 : 0,
+      require_complete_comment: payload.requireCompleteComment ? 1 : 0
     };
     // Default start_date/time if unspecified
     if (!p.start_date) {
@@ -893,9 +973,9 @@ export class TaskDatabase {
     if (!p.start_time) {
       p.start_time = '00:00';
     }
-    const sql = `INSERT INTO TASKS (TITLE, DESCRIPTION, DUE_AT, START_DATE, START_TIME, IS_RECURRING, CREATED_AT, UPDATED_AT)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
-    const id = await this.run(sql, [p.title, p.description, p.due_at, p.start_date, p.start_time, p.is_recurring, now, now]);
+    const sql = `INSERT INTO TASKS (TITLE, DESCRIPTION, DUE_AT, START_DATE, START_TIME, IS_RECURRING, REQUIRE_COMPLETE_COMMENT, CREATED_AT, UPDATED_AT)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    const id = await this.run(sql, [p.title, p.description, p.due_at, p.start_date, p.start_time, p.is_recurring, p.require_complete_comment, now, now]);
     // Insert recurrence rule: for recurring, from payload; for single, COUNT=1
     const rec = payload.recurrence;
     if (p.is_recurring && rec && rec.freq === 'monthly' && rec.monthlyDay && rec.monthlyDay >= 1 && rec.monthlyDay <= 31) {
@@ -945,11 +1025,12 @@ export class TaskDatabase {
       if (scheduledDate) {
         const exists = await this.get<any>('SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?', [id, scheduledDate]);
         if (!exists) {
-          await this.run(
+          const newId = await this.run(
             `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
              VALUES (?, ?, ?, 'pending', ?, ?)`,
             [id, scheduledDate, p.start_time || null, now, now]
           );
+          try { await this.logEvent('occ.autocreate', 'system', id, newId, { reason: 'single.ensure', date: scheduledDate }); } catch {}
         }
       }
     } else {
@@ -968,21 +1049,30 @@ export class TaskDatabase {
     if (Array.isArray(payload.tags)) {
       await this.setTagsForTask(id, payload.tags.map((s: any) => String(s || '').trim()).filter(Boolean));
     }
+    // Log: task.create (user)
+    try {
+      const after = await this.getTask(id);
+      await this.logEvent('task.create', 'user', id, null, { after, payload });
+    } catch {}
     return id;
   }
 
   async updateTask(id: number, payload: any): Promise<void> {
     const now = this.nowIso();
-    const sql = `UPDATE TASKS SET TITLE = ?, DESCRIPTION = ?, DUE_AT = ?, START_DATE = ?, START_TIME = ?, IS_RECURRING = ?, UPDATED_AT = ? WHERE ID = ?`;
+    // Snapshot before
+    let before: any = null;
+    try { before = await this.getTask(id); } catch {}
+    const sql = `UPDATE TASKS SET TITLE = ?, DESCRIPTION = ?, DUE_AT = ?, START_DATE = ?, START_TIME = ?, IS_RECURRING = ?, REQUIRE_COMPLETE_COMMENT = ?, UPDATED_AT = ? WHERE ID = ?`;
     const p = {
       title: payload.title || '',
       description: payload.description || null,
       due_at: payload.dueAt || null,
       start_date: payload.startDate || null,
       start_time: payload.startTime || null,
-      is_recurring: payload.isRecurring ? 1 : 0
+      is_recurring: payload.isRecurring ? 1 : 0,
+      require_complete_comment: payload.requireCompleteComment ? 1 : 0
     };
-    await this.run(sql, [p.title, p.description, p.due_at, p.start_date, p.start_time, p.is_recurring, now, id]);
+    await this.run(sql, [p.title, p.description, p.due_at, p.start_date, p.start_time, p.is_recurring, p.require_complete_comment, now, id]);
     // Upsert/delete recurrence rule based on payload
     const rec = payload.recurrence;
     if (p.is_recurring && rec && rec.freq === 'monthly' && rec.monthlyDay && rec.monthlyDay >= 1 && rec.monthlyDay <= 31) {
@@ -1087,9 +1177,21 @@ export class TaskDatabase {
     if (Array.isArray(payload.tags)) {
       await this.setTagsForTask(id, payload.tags.map((s: any) => String(s || '').trim()).filter(Boolean));
     }
+    // Log: task.update (user)
+    try {
+      const after = await this.getTask(id);
+      await this.logEvent('task.update', 'user', id, null, { before, after, payload });
+    } catch {}
   }
 
   async deleteTask(id: number): Promise<void> {
+    // Snapshot before delete
+    let before: any = null;
+    try { before = await this.getTask(id); } catch {}
     await this.run('DELETE FROM TASKS WHERE ID = ?', [id]);
+    // Log: task.delete (user)
+    try {
+      await this.logEvent('task.delete', 'user', id, null, { before });
+    } catch {}
   }
 }

@@ -113,7 +113,7 @@ function buildRecurrenceFromUI(): any {
   return null;
 }
 
-function computeTargetDates(rec: any, startDateStr: string | null, options: { range: string }): string[] {
+function computeTargetDates(rec: any, startDateStr: string | null, options: { range: string; isNew?: boolean }): string[] {
   const today = new Date();
   const res: string[] = [];
   const startDate = startDateStr ? new Date(startDateStr) : new Date(today);
@@ -143,7 +143,12 @@ function computeTargetDates(rec: any, startDateStr: string | null, options: { ra
       return res;
     }
     if (anchor === 'completed') {
-      // プレビューは1件のみ（完了基準）
+      // 新規作成（まだオカレンスが存在しない）場合は開始日で1件を想定
+      if (options.isNew) {
+        if (startDateStr) addIfInRange(startDate);
+        return res;
+      }
+      // 既存の場合は次回想定（概算）を1件だけ表示（完了基準）
       const d = new Date(today); d.setDate(d.getDate() + interval);
       addIfInRange(d);
       return res;
@@ -300,6 +305,51 @@ function renderPreview(add: string[], del: OccurrenceView[], same: OccurrenceVie
 
 let currentTask: TaskRow | null = null;
 
+function setRowVisibleById(id: string, show: boolean): void {
+  const r = document.getElementById(id);
+  if (r) r.style.display = show ? '' : 'none';
+}
+
+function setRowVisibleByInput(inputId: string, show: boolean): void {
+  const i = document.getElementById(inputId);
+  const row = i?.parentElement;
+  if (row && row.classList.contains('row')) row.style.display = show ? '' : 'none';
+}
+
+function updateRecurrenceVisibility(mode: RecurrenceUIMode): void {
+  const showOnce = mode === 'once';
+  const showDaily = mode === 'daily';
+  const showEveryNScheduled = mode === 'everyNScheduled';
+  const showEveryNCompleted = mode === 'everyNCompleted';
+  const showWeekly = mode === 'weekly';
+  const showMonthly = mode === 'monthly';
+  const showMonthlyNth = mode === 'monthlyNth';
+  const showYearly = mode === 'yearly';
+
+  // Single occurrence vs recurring basics
+  setRowVisibleByInput('dueAt', showOnce);
+  setRowVisibleByInput('startDate', !showOnce);
+  setRowVisibleByInput('startTime', !showOnce);
+
+  // Daily and interval related
+  setRowVisibleById('rowHorizon', showDaily || showEveryNScheduled);
+  setRowVisibleById('rowInterval', showEveryNScheduled || showEveryNCompleted);
+
+  // Weekly/Monthly/Yearly groups
+  setRowVisibleById('rowWeekly', showWeekly);
+  setRowVisibleById('rowMonthlyDay', showMonthly);
+  setRowVisibleById('rowMonthlyNth', showMonthlyNth);
+  setRowVisibleById('rowYearlyMonth', showYearly);
+  setRowVisibleById('rowYearlyDay', showYearly);
+
+  // Recurrence count: visible for any recurring pattern except 'once'
+  setRowVisibleByInput('recurrenceCount', !showOnce);
+
+  // Required flags
+  const dueAtEl = el<HTMLInputElement>('dueAt');
+  if (dueAtEl) dueAtEl.required = showOnce;
+}
+
 async function loadInitial(): Promise<void> {
   // parse query
   const params = new URLSearchParams(window.location.search);
@@ -313,6 +363,9 @@ async function loadInitial(): Promise<void> {
     populateForm({ TITLE: '', IS_RECURRING: 0 } as any);
   }
   await refreshPreview();
+  // 初期表示の可視性を同期
+  updateRecurrenceVisibility(el<HTMLSelectElement>('isRecurring').value as RecurrenceUIMode);
+  await refreshLogs();
 }
 
 function populateForm(t: TaskRow): void {
@@ -336,6 +389,9 @@ function populateForm(t: TaskRow): void {
   el<HTMLSelectElement>('yearlyMonth').value = (t as any).YEARLY_MONTH != null ? String((t as any).YEARLY_MONTH) : String(new Date().getMonth()+1);
   el<HTMLInputElement>('yearlyDay').value = t.MONTHLY_DAY ? String(t.MONTHLY_DAY) : String(new Date().getDate());
   el<HTMLInputElement>('recurrenceCount').value = String((t.IS_RECURRING ? (t.COUNT ?? 0) : 1));
+  // 完了時コメント
+  const cb = document.getElementById('requireCompleteComment') as HTMLInputElement | null;
+  if (cb) cb.checked = !!(t as any).REQUIRE_COMPLETE_COMMENT;
   // weekly
   const wMask = Number((t as any).WEEKLY_DOWS || 0);
   const boxes = Array.from(el<HTMLDivElement>('weeklyDows').querySelectorAll('input[type="checkbox"]')) as HTMLInputElement[];
@@ -355,8 +411,9 @@ async function refreshPreview(): Promise<void> {
   const taskIdStr = el<HTMLInputElement>('taskId').value;
   const startDate = el<HTMLInputElement>('startDate').value || null;
   const rec = buildRecurrenceFromUI();
-  const target = computeTargetDates(rec, startDate, { range });
-  const current: OccurrenceView[] = taskIdStr ? await fetchOccurrencesInRange(Number(taskIdStr), range) : [];
+  const isNew = !taskIdStr;
+  const current: OccurrenceView[] = isNew ? [] : await fetchOccurrencesInRange(Number(taskIdStr), range);
+  const target = computeTargetDates(rec, startDate, { range, isNew });
   const diff = diffOccurrences(current, target, excludeDone);
   renderPreview(diff.add, diff.del, diff.same);
 }
@@ -380,11 +437,13 @@ async function onSave() {
     startTime: el<HTMLInputElement>('startTime').value || null,
     recurrence: buildRecurrenceFromUI()
   };
+  const requireCommentEl = document.getElementById('requireCompleteComment') as HTMLInputElement | null;
+  if (requireCommentEl) (payload as any).requireCompleteComment = requireCommentEl.checked ? 1 : 0;
   if (!payload.recurrence) payload.isRecurring = false;
   // 確認: 削除予定にdoneが含まれる場合は警告
   const range = (el<HTMLSelectElement>('previewRange').value || '8w');
   const current: OccurrenceView[] = (el<HTMLInputElement>('taskId').value) ? await fetchOccurrencesInRange(Number(el<HTMLInputElement>('taskId').value), range) : [];
-  const target = computeTargetDates(payload.recurrence, startDate, { range });
+  const target = computeTargetDates(payload.recurrence, startDate, { range, isNew: !el<HTMLInputElement>('taskId').value });
   const diff = diffOccurrences(current, target, false);
   const doneDel = diff.del.filter(d => d.status === 'done').length;
   if (doneDel > 0) {
@@ -399,6 +458,7 @@ async function onSave() {
     if (res.success && res.id) el<HTMLInputElement>('taskId').value = String(res.id);
   }
   await refreshPreview();
+  await refreshLogs();
 }
 
 async function onDelete() {
@@ -421,6 +481,64 @@ window.addEventListener('DOMContentLoaded', async () => {
   el<HTMLButtonElement>('saveBtn').addEventListener('click', onSave);
   el<HTMLButtonElement>('deleteBtn').addEventListener('click', onDelete);
 
+  // Recurrence mode change -> visibility + preview already requested by change listener
+  el<HTMLSelectElement>('isRecurring').addEventListener('change', () => {
+    updateRecurrenceVisibility(el<HTMLSelectElement>('isRecurring').value as RecurrenceUIMode);
+  });
+
   await loadInitial();
 });
 
+async function refreshLogs(): Promise<void> {
+  const logsWrap = document.getElementById('logs') as HTMLDivElement | null;
+  const logsList = document.getElementById('logsList') as HTMLDivElement | null;
+  if (!logsWrap || !logsList) return;
+  const idStr = el<HTMLInputElement>('taskId').value;
+  if (!idStr) { logsWrap.style.display = 'none'; logsList.innerHTML = ''; return; }
+  try {
+    const rows = await window.electronAPI.listEvents({ taskId: Number(idStr), limit: 10 });
+    if (!rows || rows.length === 0) {
+      logsWrap.style.display = 'none'; logsList.innerHTML = '';
+      return;
+    }
+    logsWrap.style.display = '';
+    logsList.innerHTML = '';
+    for (const r of rows) {
+      const item = document.createElement('div');
+      item.className = 'occ';
+      const when = document.createElement('div');
+      const dt = new Date(r.CREATED_AT || r.created_at || r.createdAt || '');
+      const y = dt.getFullYear();
+      const m = String(dt.getMonth() + 1).padStart(2, '0');
+      const d = String(dt.getDate()).padStart(2, '0');
+      const hh = String(dt.getHours()).padStart(2, '0');
+      const mm = String(dt.getMinutes()).padStart(2, '0');
+      when.textContent = `${y}-${m}-${d} ${hh}:${mm}`;
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = `${r.KIND || r.kind} (${r.SOURCE || r.source})`;
+      item.appendChild(when);
+      item.appendChild(meta);
+      // 追加情報: occ.complete(user) のとき DETAILS.comment があれば表示
+      const kind = String(r.KIND || r.kind || '');
+      const source = String(r.SOURCE || r.source || '');
+      const detailsStr = (r.DETAILS || r.details || '') as string;
+      if (kind === 'occ.complete' && source === 'user' && detailsStr) {
+        try {
+          const details = JSON.parse(detailsStr);
+          if (details && typeof details.comment === 'string' && details.comment.trim().length > 0) {
+            const extra = document.createElement('div');
+            extra.className = 'meta';
+            extra.textContent = `コメント: ${details.comment}`;
+            item.appendChild(extra);
+          }
+        } catch {
+          // ignore JSON parse errors silently
+        }
+      }
+      logsList.appendChild(item);
+    }
+  } catch {
+    logsWrap.style.display = 'none';
+  }
+}

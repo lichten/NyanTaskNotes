@@ -2,6 +2,7 @@ import { app, dialog, ipcMain, BrowserWindow } from 'electron';
 import log from 'electron-log';
 import type Store from 'electron-store';
 import type { TaskDatabase } from '../taskDatabase';
+import * as path from 'path';
 
 export function registerTaskIpcHandlers(opts: {
   taskDb: () => TaskDatabase | null;
@@ -102,11 +103,11 @@ export function registerTaskIpcHandlers(opts: {
     }
   });
 
-  ipcMain.handle('occ:complete', async (_event, id: number) => {
+  ipcMain.handle('occ:complete', async (_event, id: number, options?: { comment?: string }) => {
     const db = getTaskDb();
     if (!db) return { success: false };
     try {
-      await (db as any).completeOccurrence(id);
+      await (db as any).completeOccurrence(id, options || {});
       return { success: true };
     } catch (e) {
       log.error('occ:complete error', e);
@@ -123,6 +124,39 @@ export function registerTaskIpcHandlers(opts: {
     } catch (e) {
       log.error('task-tags:list error', e);
       throw e;
+    }
+  });
+
+  // Task events (logs)
+  ipcMain.handle('events:list', async (_event, params: { taskId: number; limit?: number } ) => {
+    const db = getTaskDb();
+    if (!db) return [];
+    try {
+      const { taskId, limit } = params || ({} as any);
+      if (!taskId) return [];
+      return await (db as any).listTaskEvents({ taskId, limit: limit ?? 10 });
+    } catch (e) {
+      log.error('events:list error', e);
+      throw e;
+    }
+  });
+
+  // Simple text prompt using electron-prompt
+  ipcMain.handle('prompt:text', async (event, opts: { title?: string; label?: string; placeholder?: string; ok?: string; cancel?: string }) => {
+    const parent = getMainWindow() || BrowserWindow.fromWebContents(event.sender) || undefined;
+    try {
+      const mod = await import('electron-prompt' as any);
+      const promptFn: any = (mod as any).default || (mod as any);
+      const result = await promptFn({
+        title: opts?.title ?? '入力',
+        label: opts?.label ?? '入力',
+        inputAttrs: { type: 'text', placeholder: opts?.placeholder ?? '' },
+        buttonLabels: { ok: opts?.ok ?? 'OK', cancel: opts?.cancel ?? 'キャンセル' }
+      }, parent as any);
+      return (typeof result === 'string') ? result : null;
+    } catch (e) {
+      log.error('prompt:text error', e);
+      return null;
     }
   });
 }

@@ -46,6 +46,7 @@
           <div class="row"><label for="title">タイトル</label><input id="title" type="text" required /></div>
           <div class="row"><label for="description">説明</label><textarea id="description"></textarea></div>
           <div class="row"><label for="tags">タグ</label><input id="tags" type="text" placeholder="カンマ区切り" /></div>
+          <div class="row"><label for="requireCompleteComment">完了時コメント</label><label style="flex:1;"><input id="requireCompleteComment" type="checkbox" /> 完了時にコメント入力を促す</label></div>
           <div class="row"><label for="dueAt">期日（単発）</label><input id="dueAt" type="date" /></div>
           <h3>繰り返し</h3>
           <div class="row"><label for="isRecurring">繰り返し</label>
@@ -128,9 +129,12 @@
           <h3><span class="pill same">変更なし</span></h3>
           <div id="listSame" class="list"></div>
         </div>
+        <div id="logs" style="margin-top:16px; display:none;">
+          <h3>最近のログ</h3>
+          <div id="logsList" class="list"></div>
+        </div>
       </section>
     </main>
     <script type="module" src="js/taskEditor2.js"></script>
   </body>
   </html>
-
