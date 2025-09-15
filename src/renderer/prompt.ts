@@ -20,8 +20,8 @@ window.addEventListener('DOMContentLoaded', () => {
   const submit = (value: string | null) => {
     try {
       (window as any).electronAPI.submitPrompt({ requestId, value });
+      // ウィンドウのクローズはメイン側(onSubmit)で行う（レース回避）
     } catch {}
-    window.close();
   };
 
   $('okBtn').addEventListener('click', () => submit((($('value')) as HTMLInputElement).value));
@@ -29,4 +29,3 @@ window.addEventListener('DOMContentLoaded', () => {
   input.addEventListener('keydown', (e) => { if ((e as KeyboardEvent).key === 'Enter') submit(input.value); });
   setTimeout(() => input.focus(), 0);
 });
-

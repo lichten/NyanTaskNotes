@@ -166,14 +166,19 @@ export function registerTaskIpcHandlers(opts: {
     const urlOpts: any = { query: { ...opts, requestId } };
     await win.loadFile('prompt.html', urlOpts);
     return await new Promise<string | null>((resolve) => {
+      let settled = false;
       const onSubmit = (_ev: any, payload: any) => {
         if (!payload || payload.requestId !== requestId) return;
+        if (settled) return;
+        settled = true;
         try { ipcMain.off('prompt:text:submit', onSubmit as any); } catch {}
         try { if (!win.isDestroyed()) win.close(); } catch {}
         resolve(typeof payload.value === 'string' || payload.value === null ? payload.value : null);
       };
       ipcMain.on('prompt:text:submit', onSubmit as any);
       win.on('closed', () => {
+        if (settled) return;
+        settled = true;
         try { ipcMain.off('prompt:text:submit', onSubmit as any); } catch {}
         resolve(null);
       });
