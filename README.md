@@ -38,6 +38,7 @@ npm start
 ## データベース
 - タスクDBスキーマ: `db/task_schema.sql`（起動時に自動適用）
 - ファイルDBスキーマ: `db/file_schema.sql`（指定したファイルに適用）
+- 繰り返し設定とDBの対応: `docs/recurrence-mapping.md`
 
 ## スクリプト
 - `npm run build` — TypeScriptをコンパイル
