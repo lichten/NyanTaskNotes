@@ -181,10 +181,14 @@ async function loadTasks(): Promise<void> {
           btn.onclick = async () => {
             let options: any = {};
             if (o.REQUIRE_COMPLETE_COMMENT) {
-              const input = prompt('完了コメントを入力してください（省略可）', '');
-              if (input === null) {
-                return; // ユーザーがキャンセル
-              }
+              const input = await window.electronAPI.promptText({
+                title: '完了コメント',
+                label: 'コメントを入力',
+                placeholder: '',
+                ok: 'OK',
+                cancel: 'キャンセル'
+              });
+              if (input === null) return; // ユーザーがキャンセル
               options.comment = String(input);
             }
             await window.electronAPI.completeOccurrence(o.OCCURRENCE_ID, options);

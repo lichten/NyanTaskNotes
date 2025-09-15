@@ -2,6 +2,7 @@ import { app, dialog, ipcMain, BrowserWindow } from 'electron';
 import log from 'electron-log';
 import type Store from 'electron-store';
 import type { TaskDatabase } from '../taskDatabase';
+import * as path from 'path';
 
 export function registerTaskIpcHandlers(opts: {
   taskDb: () => TaskDatabase | null;
@@ -138,5 +139,42 @@ export function registerTaskIpcHandlers(opts: {
       log.error('events:list error', e);
       throw e;
     }
+  });
+
+  // Simple text prompt (modal child window)
+  ipcMain.handle('prompt:text', async (event, opts: { title?: string; label?: string; placeholder?: string; ok?: string; cancel?: string }) => {
+    const parent = getMainWindow() || BrowserWindow.fromWebContents(event.sender) || undefined;
+    const requestId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const win = new BrowserWindow({
+      width: 420,
+      height: 200,
+      parent,
+      modal: true,
+      show: false,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        preload: path.join(__dirname, 'preload.js')
+      }
+    });
+    const urlOpts: any = { query: { ...opts, requestId } };
+    await win.loadFile('prompt.html', urlOpts);
+    return await new Promise<string | null>((resolve) => {
+      const onSubmit = (_ev: any, payload: any) => {
+        if (!payload || payload.requestId !== requestId) return;
+        try { ipcMain.off('prompt:text:submit', onSubmit as any); } catch {}
+        try { if (!win.isDestroyed()) win.close(); } catch {}
+        resolve(typeof payload.value === 'string' || payload.value === null ? payload.value : null);
+      };
+      ipcMain.on('prompt:text:submit', onSubmit as any);
+      win.on('closed', () => {
+        try { ipcMain.off('prompt:text:submit', onSubmit as any); } catch {}
+        resolve(null);
+      });
+      win.show();
+    });
   });
 }
