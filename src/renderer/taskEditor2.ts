@@ -365,6 +365,7 @@ async function loadInitial(): Promise<void> {
   await refreshPreview();
   // 初期表示の可視性を同期
   updateRecurrenceVisibility(el<HTMLSelectElement>('isRecurring').value as RecurrenceUIMode);
+  await refreshLogs();
 }
 
 function populateForm(t: TaskRow): void {
@@ -452,6 +453,7 @@ async function onSave() {
     if (res.success && res.id) el<HTMLInputElement>('taskId').value = String(res.id);
   }
   await refreshPreview();
+  await refreshLogs();
 }
 
 async function onDelete() {
@@ -481,3 +483,40 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   await loadInitial();
 });
+
+async function refreshLogs(): Promise<void> {
+  const logsWrap = document.getElementById('logs') as HTMLDivElement | null;
+  const logsList = document.getElementById('logsList') as HTMLDivElement | null;
+  if (!logsWrap || !logsList) return;
+  const idStr = el<HTMLInputElement>('taskId').value;
+  if (!idStr) { logsWrap.style.display = 'none'; logsList.innerHTML = ''; return; }
+  try {
+    const rows = await window.electronAPI.listEvents({ taskId: Number(idStr), limit: 10 });
+    if (!rows || rows.length === 0) {
+      logsWrap.style.display = 'none'; logsList.innerHTML = '';
+      return;
+    }
+    logsWrap.style.display = '';
+    logsList.innerHTML = '';
+    for (const r of rows) {
+      const item = document.createElement('div');
+      item.className = 'occ';
+      const when = document.createElement('div');
+      const dt = new Date(r.CREATED_AT || r.created_at || r.createdAt || '');
+      const y = dt.getFullYear();
+      const m = String(dt.getMonth() + 1).padStart(2, '0');
+      const d = String(dt.getDate()).padStart(2, '0');
+      const hh = String(dt.getHours()).padStart(2, '0');
+      const mm = String(dt.getMinutes()).padStart(2, '0');
+      when.textContent = `${y}-${m}-${d} ${hh}:${mm}`;
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = `${r.KIND || r.kind} (${r.SOURCE || r.source})`;
+      item.appendChild(when);
+      item.appendChild(meta);
+      logsList.appendChild(item);
+    }
+  } catch {
+    logsWrap.style.display = 'none';
+  }
+}

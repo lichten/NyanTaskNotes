@@ -29,6 +29,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ,
   // Task tags
   listTaskTags: () => ipcRenderer.invoke('task-tags:list')
+  ,
+  // Events (logs)
+  listEvents: (params: { taskId: number; limit?: number }) => ipcRenderer.invoke('events:list', params)
 });
 
 declare global {
@@ -51,6 +54,7 @@ declare global {
       listOccurrences: (params?: any) => Promise<any[]>;
       completeOccurrence: (id: number) => Promise<{ success: boolean }>;
       listTaskTags: () => Promise<string[]>;
+      listEvents: (params: { taskId: number; limit?: number }) => Promise<any[]>;
     };
   }
 }

@@ -125,4 +125,18 @@ export function registerTaskIpcHandlers(opts: {
       throw e;
     }
   });
+
+  // Task events (logs)
+  ipcMain.handle('events:list', async (_event, params: { taskId: number; limit?: number } ) => {
+    const db = getTaskDb();
+    if (!db) return [];
+    try {
+      const { taskId, limit } = params || ({} as any);
+      if (!taskId) return [];
+      return await (db as any).listTaskEvents({ taskId, limit: limit ?? 10 });
+    } catch (e) {
+      log.error('events:list error', e);
+      throw e;
+    }
+  });
 }

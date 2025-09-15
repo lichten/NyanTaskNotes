@@ -927,6 +927,21 @@ export class TaskDatabase {
     return rows.map(r => r.NAME as string);
   }
 
+  async listTaskEvents(params: { taskId: number; limit?: number }): Promise<any[]> {
+    const taskId = Number(params.taskId);
+    const limit = Math.max(1, Math.min(100, Number(params.limit ?? 10)));
+    const rows = await this.all<any>(
+      `SELECT ID, CREATED_AT, KIND, SOURCE, TASK_ID, OCCURRENCE_ID, DETAILS
+       FROM TASK_EVENTS
+       WHERE TASK_ID = ?
+       ORDER BY CREATED_AT DESC, ID DESC
+       LIMIT ?`,
+      [taskId, limit]
+    );
+    // Optionally parse JSON DETAILS here; keep as text for flexibility in renderer
+    return rows;
+  }
+
   async createTask(payload: any): Promise<number> {
     const now = this.nowIso();
     const p = {
