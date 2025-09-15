@@ -78,6 +78,13 @@ export class TaskDatabase {
     await this.run(`CREATE INDEX IF NOT EXISTS IDX_TASK_EVENTS_TASK_CREATED ON TASK_EVENTS (TASK_ID, CREATED_AT)`);
     await this.run(`CREATE INDEX IF NOT EXISTS IDX_TASK_EVENTS_OCC ON TASK_EVENTS (OCCURRENCE_ID)`);
     await this.run(`CREATE INDEX IF NOT EXISTS IDX_TASK_EVENTS_KIND_CREATED ON TASK_EVENTS (KIND, CREATED_AT)`);
+
+    // TASKS: REQUIRE_COMPLETE_COMMENT
+    const tcols: Array<{ name: string }> = await this.all<any>("PRAGMA table_info('TASKS')");
+    const hasReqComment = tcols.some(c => String(c.name).toUpperCase() === 'REQUIRE_COMPLETE_COMMENT');
+    if (!hasReqComment) {
+      await this.run("ALTER TABLE TASKS ADD COLUMN REQUIRE_COMPLETE_COMMENT INTEGER NOT NULL DEFAULT 0");
+    }
   }
 
   private async logEvent(kind: string, source: 'user' | 'system', taskId?: number | null, occurrenceId?: number | null, details?: any): Promise<void> {
@@ -724,7 +731,7 @@ export class TaskDatabase {
     if (params.query) { where.push('(T.TITLE LIKE ? OR T.DESCRIPTION LIKE ?)'); binds.push(`%${params.query}%`, `%${params.query}%`); }
     const sql = `SELECT O.ID AS OCCURRENCE_ID, O.SCHEDULED_DATE, O.SCHEDULED_TIME, O.STATUS AS OCC_STATUS, O.COMPLETED_AT,
                         T.ID AS TASK_ID, T.TITLE, T.DESCRIPTION,
-                        T.START_DATE, T.START_TIME, T.IS_RECURRING,
+                        T.START_DATE, T.START_TIME, T.IS_RECURRING, T.REQUIRE_COMPLETE_COMMENT,
                         R.FREQ, R.MONTHLY_DAY, R.COUNT
                  FROM TASK_OCCURRENCES O
                  JOIN TASKS T ON T.ID = O.TASK_ID
@@ -734,7 +741,7 @@ export class TaskDatabase {
     return this.all<any>(sql, binds);
   }
 
-  async completeOccurrence(occurrenceId: number): Promise<void> {
+  async completeOccurrence(occurrenceId: number, options: { comment?: string } = {}): Promise<void> {
     const now = this.nowIso();
     const occ = await this.get<any>(
       `SELECT O.ID, O.TASK_ID, O.SCHEDULED_DATE, T.START_DATE, T.START_TIME,
@@ -751,7 +758,9 @@ export class TaskDatabase {
     await this.run(`UPDATE TASK_OCCURRENCES SET STATUS = 'done', COMPLETED_AT = ?, UPDATED_AT = ? WHERE ID = ?`, [now, now, occurrenceId]);
     // Log: occ.complete (user)
     try {
-      await this.logEvent('occ.complete', 'user', Number(occ.TASK_ID), occurrenceId, { from: prevStatus, to: 'done', completedAt: now });
+      const details: any = { from: prevStatus, to: 'done', completedAt: now };
+      if (options && typeof options.comment !== 'undefined') details.comment = options.comment;
+      await this.logEvent('occ.complete', 'user', Number(occ.TASK_ID), occurrenceId, details);
     } catch {}
     // Generate next occurrence for recurring tasks
     if (occ.FREQ === 'monthly' && occ.MONTHLY_DAY && (!occ.COUNT || Number(occ.COUNT) === 0)) {
@@ -950,7 +959,8 @@ export class TaskDatabase {
       due_at: payload.dueAt || null,
       start_date: payload.startDate || null,
       start_time: payload.startTime || null,
-      is_recurring: payload.isRecurring ? 1 : 0
+      is_recurring: payload.isRecurring ? 1 : 0,
+      require_complete_comment: payload.requireCompleteComment ? 1 : 0
     };
     // Default start_date/time if unspecified
     if (!p.start_date) {
@@ -963,9 +973,9 @@ export class TaskDatabase {
     if (!p.start_time) {
       p.start_time = '00:00';
     }
-    const sql = `INSERT INTO TASKS (TITLE, DESCRIPTION, DUE_AT, START_DATE, START_TIME, IS_RECURRING, CREATED_AT, UPDATED_AT)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
-    const id = await this.run(sql, [p.title, p.description, p.due_at, p.start_date, p.start_time, p.is_recurring, now, now]);
+    const sql = `INSERT INTO TASKS (TITLE, DESCRIPTION, DUE_AT, START_DATE, START_TIME, IS_RECURRING, REQUIRE_COMPLETE_COMMENT, CREATED_AT, UPDATED_AT)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    const id = await this.run(sql, [p.title, p.description, p.due_at, p.start_date, p.start_time, p.is_recurring, p.require_complete_comment, now, now]);
     // Insert recurrence rule: for recurring, from payload; for single, COUNT=1
     const rec = payload.recurrence;
     if (p.is_recurring && rec && rec.freq === 'monthly' && rec.monthlyDay && rec.monthlyDay >= 1 && rec.monthlyDay <= 31) {
@@ -1052,16 +1062,17 @@ export class TaskDatabase {
     // Snapshot before
     let before: any = null;
     try { before = await this.getTask(id); } catch {}
-    const sql = `UPDATE TASKS SET TITLE = ?, DESCRIPTION = ?, DUE_AT = ?, START_DATE = ?, START_TIME = ?, IS_RECURRING = ?, UPDATED_AT = ? WHERE ID = ?`;
+    const sql = `UPDATE TASKS SET TITLE = ?, DESCRIPTION = ?, DUE_AT = ?, START_DATE = ?, START_TIME = ?, IS_RECURRING = ?, REQUIRE_COMPLETE_COMMENT = ?, UPDATED_AT = ? WHERE ID = ?`;
     const p = {
       title: payload.title || '',
       description: payload.description || null,
       due_at: payload.dueAt || null,
       start_date: payload.startDate || null,
       start_time: payload.startTime || null,
-      is_recurring: payload.isRecurring ? 1 : 0
+      is_recurring: payload.isRecurring ? 1 : 0,
+      require_complete_comment: payload.requireCompleteComment ? 1 : 0
     };
-    await this.run(sql, [p.title, p.description, p.due_at, p.start_date, p.start_time, p.is_recurring, now, id]);
+    await this.run(sql, [p.title, p.description, p.due_at, p.start_date, p.start_time, p.is_recurring, p.require_complete_comment, now, id]);
     // Upsert/delete recurrence rule based on payload
     const rec = payload.recurrence;
     if (p.is_recurring && rec && rec.freq === 'monthly' && rec.monthlyDay && rec.monthlyDay >= 1 && rec.monthlyDay <= 31) {

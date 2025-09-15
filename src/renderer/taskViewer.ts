@@ -179,7 +179,15 @@ async function loadTasks(): Promise<void> {
         if (o.OCC_STATUS !== 'done') {
           btn.textContent = '完了にする';
           btn.onclick = async () => {
-            await window.electronAPI.completeOccurrence(o.OCCURRENCE_ID);
+            let options: any = {};
+            if (o.REQUIRE_COMPLETE_COMMENT) {
+              const input = prompt('完了コメントを入力してください（省略可）', '');
+              if (input === null) {
+                return; // ユーザーがキャンセル
+              }
+              options.comment = String(input);
+            }
+            await window.electronAPI.completeOccurrence(o.OCCURRENCE_ID, options);
             await loadTasks();
           };
         } else {

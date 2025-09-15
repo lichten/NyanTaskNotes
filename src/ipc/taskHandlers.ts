@@ -102,11 +102,11 @@ export function registerTaskIpcHandlers(opts: {
     }
   });
 
-  ipcMain.handle('occ:complete', async (_event, id: number) => {
+  ipcMain.handle('occ:complete', async (_event, id: number, options?: { comment?: string }) => {
     const db = getTaskDb();
     if (!db) return { success: false };
     try {
-      await (db as any).completeOccurrence(id);
+      await (db as any).completeOccurrence(id, options || {});
       return { success: true };
     } catch (e) {
       log.error('occ:complete error', e);

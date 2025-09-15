@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ,
   // Occurrences
   listOccurrences: (params?: any) => ipcRenderer.invoke('occ:list', params || {}),
-  completeOccurrence: (id: number) => ipcRenderer.invoke('occ:complete', id)
+  completeOccurrence: (id: number, options?: { comment?: string }) => ipcRenderer.invoke('occ:complete', id, options || {})
   ,
   // Task tags
   listTaskTags: () => ipcRenderer.invoke('task-tags:list')
@@ -52,7 +52,7 @@ declare global {
       updateTask: (id: number, payload: any) => Promise<{ success: boolean }>;
       deleteTask: (id: number) => Promise<{ success: boolean }>;
       listOccurrences: (params?: any) => Promise<any[]>;
-      completeOccurrence: (id: number) => Promise<{ success: boolean }>;
+      completeOccurrence: (id: number, options?: { comment?: string }) => Promise<{ success: boolean }>;
       listTaskTags: () => Promise<string[]>;
       listEvents: (params: { taskId: number; limit?: number }) => Promise<any[]>;
     };

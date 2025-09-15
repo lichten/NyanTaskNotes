@@ -389,6 +389,9 @@ function populateForm(t: TaskRow): void {
   el<HTMLSelectElement>('yearlyMonth').value = (t as any).YEARLY_MONTH != null ? String((t as any).YEARLY_MONTH) : String(new Date().getMonth()+1);
   el<HTMLInputElement>('yearlyDay').value = t.MONTHLY_DAY ? String(t.MONTHLY_DAY) : String(new Date().getDate());
   el<HTMLInputElement>('recurrenceCount').value = String((t.IS_RECURRING ? (t.COUNT ?? 0) : 1));
+  // 完了時コメント
+  const cb = document.getElementById('requireCompleteComment') as HTMLInputElement | null;
+  if (cb) cb.checked = !!(t as any).REQUIRE_COMPLETE_COMMENT;
   // weekly
   const wMask = Number((t as any).WEEKLY_DOWS || 0);
   const boxes = Array.from(el<HTMLDivElement>('weeklyDows').querySelectorAll('input[type="checkbox"]')) as HTMLInputElement[];
@@ -434,6 +437,8 @@ async function onSave() {
     startTime: el<HTMLInputElement>('startTime').value || null,
     recurrence: buildRecurrenceFromUI()
   };
+  const requireCommentEl = document.getElementById('requireCompleteComment') as HTMLInputElement | null;
+  if (requireCommentEl) (payload as any).requireCompleteComment = requireCommentEl.checked ? 1 : 0;
   if (!payload.recurrence) payload.isRecurring = false;
   // 確認: 削除予定にdoneが含まれる場合は警告
   const range = (el<HTMLSelectElement>('previewRange').value || '8w');
