@@ -300,6 +300,51 @@ function renderPreview(add: string[], del: OccurrenceView[], same: OccurrenceVie
 
 let currentTask: TaskRow | null = null;
 
+function setRowVisibleById(id: string, show: boolean): void {
+  const r = document.getElementById(id);
+  if (r) r.style.display = show ? '' : 'none';
+}
+
+function setRowVisibleByInput(inputId: string, show: boolean): void {
+  const i = document.getElementById(inputId);
+  const row = i?.parentElement;
+  if (row && row.classList.contains('row')) row.style.display = show ? '' : 'none';
+}
+
+function updateRecurrenceVisibility(mode: RecurrenceUIMode): void {
+  const showOnce = mode === 'once';
+  const showDaily = mode === 'daily';
+  const showEveryNScheduled = mode === 'everyNScheduled';
+  const showEveryNCompleted = mode === 'everyNCompleted';
+  const showWeekly = mode === 'weekly';
+  const showMonthly = mode === 'monthly';
+  const showMonthlyNth = mode === 'monthlyNth';
+  const showYearly = mode === 'yearly';
+
+  // Single occurrence vs recurring basics
+  setRowVisibleByInput('dueAt', showOnce);
+  setRowVisibleByInput('startDate', !showOnce);
+  setRowVisibleByInput('startTime', !showOnce);
+
+  // Daily and interval related
+  setRowVisibleById('rowHorizon', showDaily || showEveryNScheduled);
+  setRowVisibleById('rowInterval', showEveryNScheduled || showEveryNCompleted);
+
+  // Weekly/Monthly/Yearly groups
+  setRowVisibleById('rowWeekly', showWeekly);
+  setRowVisibleById('rowMonthlyDay', showMonthly);
+  setRowVisibleById('rowMonthlyNth', showMonthlyNth);
+  setRowVisibleById('rowYearlyMonth', showYearly);
+  setRowVisibleById('rowYearlyDay', showYearly);
+
+  // Recurrence count: visible for any recurring pattern except 'once'
+  setRowVisibleByInput('recurrenceCount', !showOnce);
+
+  // Required flags
+  const dueAtEl = el<HTMLInputElement>('dueAt');
+  if (dueAtEl) dueAtEl.required = showOnce;
+}
+
 async function loadInitial(): Promise<void> {
   // parse query
   const params = new URLSearchParams(window.location.search);
@@ -313,6 +358,8 @@ async function loadInitial(): Promise<void> {
     populateForm({ TITLE: '', IS_RECURRING: 0 } as any);
   }
   await refreshPreview();
+  // 初期表示の可視性を同期
+  updateRecurrenceVisibility(el<HTMLSelectElement>('isRecurring').value as RecurrenceUIMode);
 }
 
 function populateForm(t: TaskRow): void {
@@ -421,6 +468,10 @@ window.addEventListener('DOMContentLoaded', async () => {
   el<HTMLButtonElement>('saveBtn').addEventListener('click', onSave);
   el<HTMLButtonElement>('deleteBtn').addEventListener('click', onDelete);
 
+  // Recurrence mode change -> visibility + preview already requested by change listener
+  el<HTMLSelectElement>('isRecurring').addEventListener('change', () => {
+    updateRecurrenceVisibility(el<HTMLSelectElement>('isRecurring').value as RecurrenceUIMode);
+  });
+
   await loadInitial();
 });
-
