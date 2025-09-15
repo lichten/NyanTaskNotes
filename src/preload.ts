@@ -34,8 +34,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listEvents: (params: { taskId: number; limit?: number }) => ipcRenderer.invoke('events:list', params)
   ,
   // Prompt
-  promptText: (options: { title?: string; label?: string; placeholder?: string; ok?: string; cancel?: string }) => ipcRenderer.invoke('prompt:text', options || {}),
-  submitPrompt: (payload: { requestId: string; value: string | null }) => ipcRenderer.send('prompt:text:submit', payload)
+  promptText: (options: { title?: string; label?: string; placeholder?: string; ok?: string; cancel?: string }) => ipcRenderer.invoke('prompt:text', options || {})
 });
 
 declare global {
@@ -60,7 +59,6 @@ declare global {
       listTaskTags: () => Promise<string[]>;
       listEvents: (params: { taskId: number; limit?: number }) => Promise<any[]>;
       promptText: (options: { title?: string; label?: string; placeholder?: string; ok?: string; cancel?: string }) => Promise<string | null>;
-      submitPrompt: (payload: { requestId: string; value: string | null }) => void;
     };
   }
 }

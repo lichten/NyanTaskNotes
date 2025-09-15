@@ -141,48 +141,22 @@ export function registerTaskIpcHandlers(opts: {
     }
   });
 
-  // Simple text prompt (modal child window)
+  // Simple text prompt using electron-prompt
   ipcMain.handle('prompt:text', async (event, opts: { title?: string; label?: string; placeholder?: string; ok?: string; cancel?: string }) => {
     const parent = getMainWindow() || BrowserWindow.fromWebContents(event.sender) || undefined;
-    const requestId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const win = new BrowserWindow({
-      width: 420,
-      height: 200,
-      useContentSize: true,
-      parent,
-      modal: true,
-      show: false,
-      resizable: false,
-      minimizable: false,
-      maximizable: false,
-      autoHideMenuBar: true,
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-        preload: path.join(__dirname, 'preload.js')
-      }
-    });
-    try { win.setMenuBarVisibility(false); } catch {}
-    const urlOpts: any = { query: { ...opts, requestId } };
-    await win.loadFile('prompt.html', urlOpts);
-    return await new Promise<string | null>((resolve) => {
-      let settled = false;
-      const onSubmit = (_ev: any, payload: any) => {
-        if (!payload || payload.requestId !== requestId) return;
-        if (settled) return;
-        settled = true;
-        try { ipcMain.off('prompt:text:submit', onSubmit as any); } catch {}
-        try { if (!win.isDestroyed()) win.close(); } catch {}
-        resolve(typeof payload.value === 'string' || payload.value === null ? payload.value : null);
-      };
-      ipcMain.on('prompt:text:submit', onSubmit as any);
-      win.on('closed', () => {
-        if (settled) return;
-        settled = true;
-        try { ipcMain.off('prompt:text:submit', onSubmit as any); } catch {}
-        resolve(null);
-      });
-      win.show();
-    });
+    try {
+      const mod = await import('electron-prompt' as any);
+      const promptFn: any = (mod as any).default || (mod as any);
+      const result = await promptFn({
+        title: opts?.title ?? '入力',
+        label: opts?.label ?? '入力',
+        inputAttrs: { type: 'text', placeholder: opts?.placeholder ?? '' },
+        buttonLabels: { ok: opts?.ok ?? 'OK', cancel: opts?.cancel ?? 'キャンセル' }
+      }, parent as any);
+      return (typeof result === 'string') ? result : null;
+    } catch (e) {
+      log.error('prompt:text error', e);
+      return null;
+    }
   });
 }
