@@ -113,7 +113,7 @@ function buildRecurrenceFromUI(): any {
   return null;
 }
 
-function computeTargetDates(rec: any, startDateStr: string | null, options: { range: string }): string[] {
+function computeTargetDates(rec: any, startDateStr: string | null, options: { range: string; isNew?: boolean }): string[] {
   const today = new Date();
   const res: string[] = [];
   const startDate = startDateStr ? new Date(startDateStr) : new Date(today);
@@ -143,7 +143,12 @@ function computeTargetDates(rec: any, startDateStr: string | null, options: { ra
       return res;
     }
     if (anchor === 'completed') {
-      // プレビューは1件のみ（完了基準）
+      // 新規作成（まだオカレンスが存在しない）場合は開始日で1件を想定
+      if (options.isNew) {
+        if (startDateStr) addIfInRange(startDate);
+        return res;
+      }
+      // 既存の場合は次回想定（概算）を1件だけ表示（完了基準）
       const d = new Date(today); d.setDate(d.getDate() + interval);
       addIfInRange(d);
       return res;
@@ -402,8 +407,9 @@ async function refreshPreview(): Promise<void> {
   const taskIdStr = el<HTMLInputElement>('taskId').value;
   const startDate = el<HTMLInputElement>('startDate').value || null;
   const rec = buildRecurrenceFromUI();
-  const target = computeTargetDates(rec, startDate, { range });
-  const current: OccurrenceView[] = taskIdStr ? await fetchOccurrencesInRange(Number(taskIdStr), range) : [];
+  const isNew = !taskIdStr;
+  const current: OccurrenceView[] = isNew ? [] : await fetchOccurrencesInRange(Number(taskIdStr), range);
+  const target = computeTargetDates(rec, startDate, { range, isNew });
   const diff = diffOccurrences(current, target, excludeDone);
   renderPreview(diff.add, diff.del, diff.same);
 }
@@ -431,7 +437,7 @@ async function onSave() {
   // 確認: 削除予定にdoneが含まれる場合は警告
   const range = (el<HTMLSelectElement>('previewRange').value || '8w');
   const current: OccurrenceView[] = (el<HTMLInputElement>('taskId').value) ? await fetchOccurrencesInRange(Number(el<HTMLInputElement>('taskId').value), range) : [];
-  const target = computeTargetDates(payload.recurrence, startDate, { range });
+  const target = computeTargetDates(payload.recurrence, startDate, { range, isNew: !el<HTMLInputElement>('taskId').value });
   const diff = diffOccurrences(current, target, false);
   const doneDel = diff.del.filter(d => d.status === 'done').length;
   if (doneDel > 0) {
