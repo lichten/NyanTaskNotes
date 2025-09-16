@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data:;" />
+    <title>タスク設定一覧 - NyanTaskNotes</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; color: #222; }
+      h1 { margin-bottom: 16px; }
+      .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 16px; margin-bottom: 16px; }
+      .filter-group { display: flex; flex-direction: column; gap: 4px; }
+      label { font-weight: 600; font-size: 13px; color: #444; }
+      input[type="text"], input[type="date"], select, textarea { padding: 6px 8px; font-size: 14px; }
+      button { padding: 8px 14px; font-size: 14px; cursor: pointer; }
+      .tag-input-row { display: flex; gap: 8px; align-items: center; }
+      .selected-tags { display: flex; flex-wrap: wrap; gap: 6px; min-height: 28px; align-items: center; }
+      .tag-chip { background: #f0f0f0; border-radius: 16px; padding: 4px 10px; font-size: 12px; display: inline-flex; gap: 6px; align-items: center; }
+      .tag-chip button { border: none; background: transparent; cursor: pointer; font-size: 12px; padding: 0; }
+      .actions { display: flex; gap: 8px; align-items: center; }
+      .results-meta { margin: 12px 0; color: #555; font-size: 13px; }
+      .task-list { border-top: 1px solid #ddd; padding-top: 12px; display: flex; flex-direction: column; gap: 12px; }
+      .task-card { border: 1px solid #ddd; border-radius: 6px; padding: 12px; }
+      .task-card h3 { margin: 0 0 6px; font-size: 16px; }
+      .task-meta { font-size: 13px; color: #555; margin-bottom: 6px; display: flex; flex-wrap: wrap; gap: 12px; }
+      .task-tags { font-size: 13px; color: #333; display: flex; flex-wrap: wrap; gap: 6px; }
+      .task-tags span { background: #eef2ff; padding: 2px 6px; border-radius: 4px; }
+      .empty { color: #777; font-size: 14px; }
+      @media (max-width: 640px) {
+        .actions { flex-wrap: wrap; }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>タスク設定一覧</h1>
+    <section class="filters" aria-label="フィルタ">
+      <div class="filter-group">
+        <label for="searchInput">キーワード</label>
+        <input id="searchInput" type="text" placeholder="タイトル / 説明を検索" />
+      </div>
+      <div class="filter-group">
+        <label for="recurrenceSelect">繰り返し区分</label>
+        <select id="recurrenceSelect">
+          <option value="all">すべて</option>
+          <option value="once">単発（1回のみ）</option>
+          <option value="dailyScheduled">毎日 / 予定基準</option>
+          <option value="dailyCompleted">毎日 / 完了基準</option>
+          <option value="weekly">毎週</option>
+          <option value="monthlyDay">毎月（日付指定）</option>
+          <option value="monthlyNth">毎月（第N曜日）</option>
+          <option value="yearly">毎年</option>
+          <option value="other">その他</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label for="tagInput">タグ</label>
+        <div class="tag-input-row">
+          <input id="tagInput" type="text" list="tagOptions" placeholder="タグを追加" />
+          <button id="addTagButton" type="button">追加</button>
+        </div>
+        <datalist id="tagOptions"></datalist>
+        <div class="selected-tags" id="selectedTags"></div>
+      </div>
+      <div class="filter-group">
+        <label>開始日</label>
+        <div class="tag-input-row">
+          <input id="startFrom" type="date" />
+          <span style="font-size:12px;color:#666;">〜</span>
+          <input id="startTo" type="date" />
+        </div>
+      </div>
+      <div class="filter-group">
+        <label>期限日</label>
+        <div class="tag-input-row">
+          <input id="dueFrom" type="date" />
+          <span style="font-size:12px;color:#666;">〜</span>
+          <input id="dueTo" type="date" />
+        </div>
+      </div>
+      <div class="filter-group">
+        <label>その他</label>
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          <label style="font-weight:400;"><input id="onlyRequireComment" type="checkbox" /> 完了時コメント必須のみ</label>
+          <label style="font-weight:400;"><input id="onlyHasCount" type="checkbox" /> 回数制限ありのみ</label>
+          <label style="font-weight:400;"><input id="onlyHasHorizon" type="checkbox" /> ホライズン設定ありのみ</label>
+        </div>
+      </div>
+    </section>
+    <div class="actions">
+      <button id="applyFilters" type="button">適用</button>
+      <button id="resetFilters" type="button">リセット</button>
+      <span class="results-meta" id="resultsMeta"></span>
+    </div>
+    <section class="task-list" id="taskList" aria-live="polite"></section>
+    <script src="js/taskSettings.js"></script>
+  </body>
+</html>
