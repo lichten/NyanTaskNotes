@@ -113,6 +113,122 @@ function buildRecurrenceFromUI(): any {
   return null;
 }
 
+function captureFormSnapshot(): TaskRow {
+  const mode = (el<HTMLSelectElement>('isRecurring').value as RecurrenceUIMode);
+  const recurrence = buildRecurrenceFromUI();
+  const tags = (el<HTMLInputElement>('tags').value || '').split(',').map(s => s.trim()).filter(Boolean);
+  const requireCommentEl = document.getElementById('requireCompleteComment') as HTMLInputElement | null;
+  const snapshot: any = {
+    TITLE: el<HTMLInputElement>('title').value.trim(),
+    DESCRIPTION: el<HTMLTextAreaElement>('description').value.trim() || null,
+    TAGS: tags,
+    DUE_AT: el<HTMLInputElement>('dueAt').value || null,
+    START_DATE: el<HTMLInputElement>('startDate').value || null,
+    START_TIME: el<HTMLInputElement>('startTime').value || null,
+    IS_RECURRING: mode === 'once' ? 0 : 1,
+    REQUIRE_COMPLETE_COMMENT: requireCommentEl && requireCommentEl.checked ? 1 : 0
+  };
+
+  if (!snapshot.START_DATE) snapshot.START_DATE = null;
+  if (!snapshot.DUE_AT) snapshot.DUE_AT = null;
+  if (!snapshot.START_TIME) snapshot.START_TIME = null;
+
+  if (!snapshot.IS_RECURRING) {
+    snapshot.FREQ = null;
+    snapshot.COUNT = 1;
+    snapshot.INTERVAL = null;
+    snapshot.INTERVAL_ANCHOR = null;
+    snapshot.HORIZON_DAYS = null;
+    snapshot.MONTHLY_DAY = null;
+    snapshot.MONTHLY_NTH = null;
+    snapshot.MONTHLY_NTH_DOW = null;
+    snapshot.YEARLY_MONTH = null;
+    snapshot.WEEKLY_DOWS = null;
+  } else if (recurrence) {
+    let count = Number((recurrence as any).count || 0);
+    if (!Number.isFinite(count) || count < 0) count = 0;
+    snapshot.COUNT = count;
+    const freq = String((recurrence as any).freq || '').toLowerCase();
+    if (freq === 'daily') {
+      snapshot.FREQ = 'daily';
+      snapshot.INTERVAL = Math.max(1, Number((recurrence as any).interval || 1));
+      snapshot.INTERVAL_ANCHOR = String((recurrence as any).anchor || 'scheduled');
+      snapshot.HORIZON_DAYS = (recurrence as any).horizonDays != null ? Number((recurrence as any).horizonDays) : null;
+      snapshot.MONTHLY_DAY = null;
+      snapshot.MONTHLY_NTH = null;
+      snapshot.MONTHLY_NTH_DOW = null;
+      snapshot.YEARLY_MONTH = null;
+      snapshot.WEEKLY_DOWS = null;
+    } else if (freq === 'weekly') {
+      snapshot.FREQ = 'weekly';
+      snapshot.WEEKLY_DOWS = Math.max(0, Number((recurrence as any).weeklyDows || 0));
+      snapshot.INTERVAL = Math.max(1, Number((recurrence as any).interval || 1));
+      snapshot.INTERVAL_ANCHOR = 'scheduled';
+      snapshot.HORIZON_DAYS = null;
+      snapshot.MONTHLY_DAY = null;
+      snapshot.MONTHLY_NTH = null;
+      snapshot.MONTHLY_NTH_DOW = null;
+      snapshot.YEARLY_MONTH = null;
+    } else if (freq === 'monthly') {
+      snapshot.FREQ = 'monthly';
+      snapshot.MONTHLY_DAY = Number((recurrence as any).monthlyDay || 1);
+      snapshot.MONTHLY_NTH = null;
+      snapshot.MONTHLY_NTH_DOW = null;
+      snapshot.YEARLY_MONTH = null;
+      snapshot.INTERVAL = null;
+      snapshot.INTERVAL_ANCHOR = null;
+      snapshot.HORIZON_DAYS = null;
+      snapshot.WEEKLY_DOWS = null;
+    } else if (freq === 'monthlynth') {
+      snapshot.FREQ = 'monthly';
+      snapshot.MONTHLY_DAY = null;
+      snapshot.MONTHLY_NTH = Number((recurrence as any).monthlyNth);
+      snapshot.MONTHLY_NTH_DOW = Number((recurrence as any).monthlyNthDow);
+      snapshot.INTERVAL = null;
+      snapshot.INTERVAL_ANCHOR = null;
+      snapshot.HORIZON_DAYS = null;
+      snapshot.YEARLY_MONTH = null;
+      snapshot.WEEKLY_DOWS = null;
+    } else if (freq === 'yearly') {
+      snapshot.FREQ = 'yearly';
+      const month = Number((recurrence as any).yearlyMonth || (recurrence as any).month || 1);
+      const day = Number((recurrence as any).yearlyDay || (recurrence as any).monthlyDay || 1);
+      snapshot.YEARLY_MONTH = month;
+      snapshot.MONTHLY_DAY = day;
+      snapshot.INTERVAL = null;
+      snapshot.INTERVAL_ANCHOR = null;
+      snapshot.HORIZON_DAYS = null;
+      snapshot.MONTHLY_NTH = null;
+      snapshot.MONTHLY_NTH_DOW = null;
+      snapshot.WEEKLY_DOWS = null;
+    } else {
+      snapshot.FREQ = freq || null;
+      snapshot.INTERVAL = null;
+      snapshot.INTERVAL_ANCHOR = null;
+      snapshot.HORIZON_DAYS = null;
+      snapshot.MONTHLY_DAY = null;
+      snapshot.MONTHLY_NTH = null;
+      snapshot.MONTHLY_NTH_DOW = null;
+      snapshot.YEARLY_MONTH = null;
+      snapshot.WEEKLY_DOWS = null;
+    }
+  } else {
+    snapshot.IS_RECURRING = 0;
+    snapshot.FREQ = null;
+    snapshot.COUNT = 1;
+    snapshot.INTERVAL = null;
+    snapshot.INTERVAL_ANCHOR = null;
+    snapshot.HORIZON_DAYS = null;
+    snapshot.MONTHLY_DAY = null;
+    snapshot.MONTHLY_NTH = null;
+    snapshot.MONTHLY_NTH_DOW = null;
+    snapshot.YEARLY_MONTH = null;
+    snapshot.WEEKLY_DOWS = null;
+  }
+
+  return snapshot as TaskRow;
+}
+
 function computeTargetDates(rec: any, startDateStr: string | null, options: { range: string; isNew?: boolean }): string[] {
   const today = new Date();
   const res: string[] = [];
@@ -353,8 +469,30 @@ function updateRecurrenceVisibility(mode: RecurrenceUIMode): void {
 async function loadInitial(): Promise<void> {
   // parse query
   const params = new URLSearchParams(window.location.search);
+  const copyMode = params.get('copy');
   const idStr = params.get('id');
-  if (idStr) {
+  if (copyMode === '1') {
+    let copyData: TaskRow | null = null;
+    try {
+      const raw = sessionStorage.getItem('taskEditorCopy');
+      if (raw) copyData = JSON.parse(raw) as TaskRow;
+      sessionStorage.removeItem('taskEditorCopy');
+    } catch {
+      copyData = null;
+    }
+    if (copyData) {
+      (copyData as any).ID = undefined;
+      currentTask = null;
+      populateForm(copyData);
+    } else if (idStr) {
+      const id = Number(idStr);
+      currentTask = await window.electronAPI.getTask(id);
+      if (currentTask) populateForm(currentTask);
+      else populateForm({ TITLE: '', IS_RECURRING: 0 } as any);
+    } else {
+      populateForm({ TITLE: '', IS_RECURRING: 0 } as any);
+    }
+  } else if (idStr) {
     const id = Number(idStr);
     currentTask = await window.electronAPI.getTask(id);
     if (currentTask) populateForm(currentTask);
@@ -471,6 +609,20 @@ async function onDelete() {
   await refreshPreview();
 }
 
+function onDuplicate(): void {
+  try {
+    const snapshot = captureFormSnapshot();
+    sessionStorage.setItem('taskEditorCopy', JSON.stringify(snapshot));
+  } catch (e) {
+    console.error('Failed to capture task snapshot', e);
+    alert('設定のコピーに失敗しました。');
+    return;
+  }
+  const params = new URLSearchParams();
+  params.set('copy', '1');
+  window.location.href = `task-editor2.html?${params.toString()}`;
+}
+
 window.addEventListener('DOMContentLoaded', async () => {
   // 変更時プレビュー
   ['title','description','tags','dueAt','isRecurring','startDate','startTime','intervalDays','dailyHorizonDays','monthlyDay','monthlyNth','monthlyNthDow','yearlyMonth','yearlyDay','recurrenceCount','previewRange','excludeDoneDeletes']
@@ -479,6 +631,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   Array.from(el<HTMLDivElement>('weeklyDows').querySelectorAll('input[type="checkbox"]')).forEach(b => b.addEventListener('change', requestPreview));
 
   el<HTMLButtonElement>('saveBtn').addEventListener('click', onSave);
+  el<HTMLButtonElement>('duplicateBtn').addEventListener('click', onDuplicate);
   el<HTMLButtonElement>('deleteBtn').addEventListener('click', onDelete);
 
   // Recurrence mode change -> visibility + preview already requested by change listener
