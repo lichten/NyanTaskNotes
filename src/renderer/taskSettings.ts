@@ -327,6 +327,20 @@
         card.appendChild(desc);
       }
 
+      if (task.ID != null) {
+        const actions = document.createElement('div');
+        actions.className = 'task-actions';
+        const editBtn = document.createElement('button');
+        editBtn.type = 'button';
+        editBtn.textContent = 'タスク編集（新）';
+        editBtn.title = 'タスク編集（新）画面を開く';
+        editBtn.onclick = () => {
+          window.location.href = `task-editor2.html?id=${task.ID}`;
+        };
+        actions.appendChild(editBtn);
+        card.appendChild(actions);
+      }
+
       list.appendChild(card);
     }
   }
