@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data:;" />
+    <title>設定 - NyanTaskNotes</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; }
+      .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+      input[type=text] { padding: 6px 8px; min-width: 360px; }
+      button { padding: 8px 12px; }
+      .status { margin-top: 12px; color: #555; white-space: pre-line; }
+    </style>
+  </head>
+  <body>
+    <h1>設定</h1>
+    <section>
+      <h3>タスクDB設定</h3>
+      <div class="row">
+        <label for="taskdb">SQLiteファイル:</label>
+        <input id="taskdb" type="text" placeholder="未設定(既定パスが使用されます)" />
+        <button id="browseTaskDb">参照</button>
+        <button id="saveTaskDb">保存</button>
+      </div>
+    </section>
+    <section>
+      <h3>ファイルDB設定</h3>
+      <div class="row">
+        <label for="filedb">SQLiteファイル:</label>
+        <input id="filedb" type="text" placeholder="未設定" />
+        <button id="browseDb">参照</button>
+        <button id="saveDb">保存</button>
+      </div>
+    </section>
+    <div class="status" id="status"></div>
+
+    <section>
+      <h3>繰り返しタスク書き出し</h3>
+      <div class="row">
+        <button id="generateRecurring">Markdown生成</button>
+        <button id="copyRecurring" disabled>コピー</button>
+        <span id="exportStatus" class="status" style="margin:0;"></span>
+      </div>
+      <textarea id="recurringMarkdown" rows="14" readonly style="width:100%; max-width:100%;"></textarea>
+    </section>
+
+    <script src="js/settings.js"></script>
+  </body>
+</html>
