@@ -23,6 +23,14 @@
       .list { display:flex; flex-direction:column; gap:6px; }
       .occ { display:flex; gap:8px; align-items:center; border-bottom:1px solid #f3f3f3; padding:6px 0; }
       .meta { color:#666; font-size:12px; }
+      .tag-controls { flex:1; display:flex; flex-direction:column; gap:8px; }
+      .tag-chips { display:flex; flex-wrap:wrap; gap:8px; }
+      .tag-chip { border:1px solid #ddd; border-radius:12px; padding:4px 10px; font-size:12px; cursor:pointer; user-select:none; background:#f8f8f8; color:#333; transition:background 0.2s ease, border-color 0.2s ease, color 0.2s ease; }
+      .tag-chip.on { background:#eef6ff; border-color:#99c5ff; color:#0b61d8; }
+      .tag-empty { color:#777; font-size:12px; }
+      .tag-ops { display:flex; gap:6px; }
+      .tag-ops input { flex:1; padding:6px 8px; }
+      .tag-ops button { padding:6px 12px; }
     </style>
   </head>
   <body>
@@ -46,7 +54,16 @@
           <input type="hidden" id="taskId" />
           <div class="row"><label for="title">タイトル</label><input id="title" type="text" required /></div>
           <div class="row"><label for="description">説明</label><textarea id="description"></textarea></div>
-          <div class="row"><label for="tags">タグ</label><input id="tags" type="text" placeholder="カンマ区切り" /></div>
+          <div class="row tag-row"><label for="tags">タグ</label>
+            <div class="tag-controls">
+              <div id="tagChips" class="tag-chips"></div>
+              <div class="tag-ops">
+                <input id="tagAddInput" type="text" placeholder="タグ名を入力" />
+                <button id="tagAddBtn" type="button">追加</button>
+              </div>
+              <input id="tags" type="hidden" />
+            </div>
+          </div>
           <div class="row"><label for="requireCompleteComment">完了時コメント</label><label style="flex:1;"><input id="requireCompleteComment" type="checkbox" /> 完了時にコメント入力を促す</label></div>
           <div class="row"><label for="dueAt">期日（単発）</label><input id="dueAt" type="date" /></div>
           <h3>繰り返し</h3>
