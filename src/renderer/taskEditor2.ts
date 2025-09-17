@@ -4,6 +4,8 @@ const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as
 
 let allTagNames: string[] = [];
 let selectedTags: string[] = [];
+let recurrenceCountTouched = false;
+let initialRecurrenceMode: RecurrenceUIMode = 'once';
 
 type OccurrenceView = { date: string; time?: string | null; status?: string; };
 
@@ -135,6 +137,19 @@ function mergeTagNames(candidates: string[]): void {
     if (n) set.add(n);
   });
   allTagNames = Array.from(set).sort((a, b) => a.localeCompare(b));
+}
+
+function maybeApplyMonthlyRecurrenceCountDefault(mode: RecurrenceUIMode): void {
+  if (mode !== 'monthly') return;
+  if (recurrenceCountTouched) return;
+  if (initialRecurrenceMode === 'monthly' && currentTask && currentTask.ID) return;
+  const rc = document.getElementById('recurrenceCount') as HTMLInputElement | null;
+  if (!rc) return;
+  const trimmed = (rc.value || '').trim();
+  if (trimmed === '' || trimmed === '1') {
+    rc.value = '0';
+    requestPreview();
+  }
 }
 
 async function refreshAllTagNames(): Promise<void> {
@@ -622,6 +637,8 @@ function populateForm(t: TaskRow): void {
   setSelectedTags((t.TAGS || []).slice(), { silent: true });
   el<HTMLInputElement>('dueAt').value = formatDateInput(t.DUE_AT);
   const mode = inferRecurrenceModeFromDb(t);
+  initialRecurrenceMode = mode;
+  recurrenceCountTouched = false;
   el<HTMLSelectElement>('isRecurring').value = mode;
   el<HTMLInputElement>('startDate').value = formatDateInput(t.START_DATE) || (() => {
     const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -738,6 +755,9 @@ window.addEventListener('DOMContentLoaded', async () => {
     .forEach(id => el<HTMLElement>(id)?.addEventListener('change', requestPreview));
   // weekly checkboxes
   Array.from(el<HTMLDivElement>('weeklyDows').querySelectorAll('input[type="checkbox"]')).forEach(b => b.addEventListener('change', requestPreview));
+  el<HTMLInputElement>('recurrenceCount').addEventListener('input', () => {
+    recurrenceCountTouched = true;
+  });
 
   await initializeTagControls();
   el<HTMLButtonElement>('saveBtn').addEventListener('click', onSave);
@@ -746,7 +766,9 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // Recurrence mode change -> visibility + preview already requested by change listener
   el<HTMLSelectElement>('isRecurring').addEventListener('change', () => {
-    updateRecurrenceVisibility(el<HTMLSelectElement>('isRecurring').value as RecurrenceUIMode);
+    const mode = el<HTMLSelectElement>('isRecurring').value as RecurrenceUIMode;
+    updateRecurrenceVisibility(mode);
+    maybeApplyMonthlyRecurrenceCountDefault(mode);
   });
 
   await loadInitial();

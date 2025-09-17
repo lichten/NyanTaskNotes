@@ -18,6 +18,11 @@
       .actions { display: flex; gap: 6px; align-items: center; }
       button { padding: 6px 10px; }
       .done { background: #f4fff4; border-color: #cfe9cf; }
+      .tag-filter-bar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+      .tag-chip { padding: 4px 10px; border-radius: 12px; border: 1px solid #ccc; background: #f6f6f6; color: #333; font-size: 12px; cursor: pointer; user-select: none; transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease; }
+      .tag-chip:hover { border-color: #aaa; }
+      .tag-chip.active { background: #eef6ff; border-color: #90c2ff; color: #0b61d8; }
+      .tag-chip.disabled { opacity: 0.5; cursor: default; }
     </style>
   </head>
   <body>
@@ -36,6 +41,7 @@
           <option value="done">done</option>
         </select>
       </div>
+      <div id="tagFilterBar" class="tag-filter-bar"></div>
       <div id="taskList"></div>
     </main>
     <script type="module" src="js/taskViewer.js"></script>
