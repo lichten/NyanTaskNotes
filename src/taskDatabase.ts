@@ -420,9 +420,11 @@ export class TaskDatabase {
     }
   }
 
-  private async ensureRecurringWeeklyOccurrences(weeksAhead: number = 8): Promise<void> {
-    // COUNT=0: 現在週から先N週分の対象曜日を生成。COUNT>=1: START_DATE以降で対象曜日の発生日をCOUNT件生成。
+  private async ensureRecurringWeeklyOccurrences(_: number = 8): Promise<void> {
+    // COUNT>=1: START_DATE以降で対象曜日の発生日をCOUNT件生成。
+    // COUNT=0: 「次に発生する１件」のみを保持し、それ以降のオカレンスは削除する。
     const today = new Date();
+    const today0 = new Date(today.getFullYear(), today.getMonth(), today.getDate());
     const dateStr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const tasks = await this.all<any>(
       `SELECT T.ID AS TASK_ID, T.START_DATE, T.START_TIME,
@@ -463,40 +465,60 @@ export class TaskDatabase {
                 [t.TASK_ID, scheduledDate, t.START_TIME || null, nowIso, nowIso]
               );
               try { await this.logEvent('occ.autocreate', 'system', t.TASK_ID, newId, { reason: 'weekly.ensure.window', date: scheduledDate }); } catch {}
-            }
-            produced++;
-          }
         }
-      } else {
-        // generate for weeksAhead starting from current week (Sunday as week start)
-        const today0 = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-        const sunday = new Date(today0);
-        sunday.setDate(today0.getDate() - today0.getDay());
-        for (let w = 0; w < weeksAhead; w++) {
-          for (let dow = 0; dow <= 6; dow++) {
-            if (!(dowsMask & (1 << dow))) continue;
-            const d = new Date(sunday);
-            d.setDate(sunday.getDate() + w * 7 + dow);
-            // Respect START_DATE and interval alignment from START_DATE's week
-            if (t.START_DATE && d < new Date(t.START_DATE as string)) continue;
-            const start = t.START_DATE ? new Date(t.START_DATE as string) : today0;
-            const startSunday = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-            startSunday.setDate(startSunday.getDate() - startSunday.getDay());
-            const weeksDiff = Math.floor((d.getTime() - startSunday.getTime()) / (1000 * 60 * 60 * 24 * 7));
+        produced++;
+      }
+      }
+    } else {
+        const start = t.START_DATE ? new Date(t.START_DATE as string) : today0;
+        const start0 = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+        const startSunday = new Date(start0);
+        startSunday.setDate(start0.getDate() - start0.getDay());
+        const findNextDate = (): string | null => {
+          for (let w = 0; w < 520; w++) {
+            const weekStart = new Date(startSunday);
+            weekStart.setDate(startSunday.getDate() + w * 7);
+            const weeksDiff = Math.floor((weekStart.getTime() - startSunday.getTime()) / (1000 * 60 * 60 * 24 * 7));
             if (weeksDiff < 0) continue;
             if (weeksDiff % interval !== 0) continue;
-            const scheduledDate = dateStr(d);
-            const exists = await this.get<any>(`SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?`, [t.TASK_ID, scheduledDate]);
-          if (!exists) {
-            const nowIso = this.nowIso();
-            const newId = await this.run(
-              `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
-               VALUES (?, ?, ?, 'pending', ?, ?)`,
-              [t.TASK_ID, scheduledDate, t.START_TIME || null, nowIso, nowIso]
-            );
-            try { await this.logEvent('occ.autocreate', 'system', t.TASK_ID, newId, { reason: 'daily.ensure.window', date: scheduledDate }); } catch {}
+            for (let dow = 0; dow <= 6; dow++) {
+              if (!(dowsMask & (1 << dow))) continue;
+              const candidate = new Date(weekStart);
+              candidate.setDate(weekStart.getDate() + dow);
+              if (candidate < start0) continue;
+              if (candidate < today0) continue;
+              return dateStr(candidate);
+            }
           }
+          return null;
+        };
+
+        const nextDate = findNextDate();
+        if (!nextDate) continue;
+
+        const futureOccs = await this.all<any>(
+          `SELECT ID, SCHEDULED_DATE FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE >= ? ORDER BY SCHEDULED_DATE ASC`,
+          [t.TASK_ID, dateStr(today0)]
+        );
+        let hasTarget = false;
+        for (const occ of futureOccs) {
+          if (occ.SCHEDULED_DATE === nextDate) {
+            if (!hasTarget) { hasTarget = true; continue; }
           }
+          if (occ.SCHEDULED_DATE > nextDate || occ.SCHEDULED_DATE === nextDate) {
+            await this.run(`DELETE FROM TASK_OCCURRENCES WHERE ID = ?`, [occ.ID]);
+            try { await this.logEvent('occ.delete', 'system', t.TASK_ID, occ.ID, { reason: 'weekly.prune.window', date: occ.SCHEDULED_DATE }); } catch {}
+          }
+        }
+
+        if (!hasTarget) {
+          const nowIso = this.nowIso();
+          const newId = await this.run(
+            `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
+             VALUES (?, ?, ?, 'pending', ?, ?)`,
+            [t.TASK_ID, nextDate, t.START_TIME || null, nowIso, nowIso]
+          );
+          try { await this.logEvent('occ.autocreate', 'system', t.TASK_ID, newId, { reason: 'weekly.ensure.nextOnly', date: nextDate }); } catch {}
         }
       }
     }
