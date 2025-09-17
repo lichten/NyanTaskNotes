@@ -482,6 +482,14 @@ async function loadInitial(): Promise<void> {
     }
     if (copyData) {
       (copyData as any).ID = undefined;
+      const normalizedStart = formatDateInput(copyData.START_DATE);
+      if (normalizedStart) {
+        const now = new Date();
+        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        copyData.START_DATE = normalizedStart < todayStr ? todayStr : normalizedStart;
+      } else {
+        copyData.START_DATE = null;
+      }
       currentTask = null;
       populateForm(copyData);
     } else if (idStr) {
