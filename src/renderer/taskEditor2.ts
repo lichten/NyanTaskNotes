@@ -2,6 +2,9 @@ import { TaskRow, RecurrenceUIMode, formatDateInput, inferRecurrenceModeFromDb, 
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
+let allTagNames: string[] = [];
+let selectedTags: string[] = [];
+
 type OccurrenceView = { date: string; time?: string | null; status?: string; };
 
 function clampMonthlyDate(year: number, monthIndex0: number, day: number): string {
@@ -113,10 +116,108 @@ function buildRecurrenceFromUI(): any {
   return null;
 }
 
+function normalizeTagName(name: string | null | undefined): string {
+  return (name ?? '').trim();
+}
+
+function mergeTagNames(candidates: string[]): void {
+  const set = new Set<string>();
+  allTagNames.forEach(tag => {
+    const n = normalizeTagName(tag);
+    if (n) set.add(n);
+  });
+  candidates.forEach(tag => {
+    const n = normalizeTagName(tag);
+    if (n) set.add(n);
+  });
+  selectedTags.forEach(tag => {
+    const n = normalizeTagName(tag);
+    if (n) set.add(n);
+  });
+  allTagNames = Array.from(set).sort((a, b) => a.localeCompare(b));
+}
+
+async function refreshAllTagNames(): Promise<void> {
+  try {
+    const fetched = await window.electronAPI.listTaskTags();
+    if (Array.isArray(fetched)) mergeTagNames(fetched);
+  } catch {
+    mergeTagNames([]);
+  }
+}
+
+function renderTagChips(): void {
+  const wrap = document.getElementById('tagChips') as HTMLDivElement | null;
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  const names = Array.from(new Set<string>([...allTagNames, ...selectedTags])).sort((a, b) => a.localeCompare(b));
+  if (!names.length) {
+    const span = document.createElement('span');
+    span.className = 'tag-empty';
+    span.textContent = 'タグはまだありません。上の入力で追加できます';
+    wrap.appendChild(span);
+    return;
+  }
+  names.forEach(name => {
+    const chip = document.createElement('span');
+    chip.className = 'tag-chip';
+    if (selectedTags.includes(name)) chip.classList.add('on');
+    chip.textContent = name;
+    chip.title = name;
+    chip.addEventListener('click', () => toggleTagSelection(name));
+    wrap.appendChild(chip);
+  });
+}
+
+function setSelectedTags(tags: string[], options?: { silent?: boolean }): void {
+  const normalized = Array.from(new Set(tags.map(t => normalizeTagName(t)).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  selectedTags = normalized;
+  mergeTagNames([]);
+  const hidden = document.getElementById('tags') as HTMLInputElement | null;
+  if (hidden) hidden.value = selectedTags.join(', ');
+  renderTagChips();
+  if (!options?.silent) requestPreview();
+}
+
+function getSelectedTags(): string[] {
+  return selectedTags.slice();
+}
+
+function toggleTagSelection(name: string): void {
+  const n = normalizeTagName(name);
+  if (!n) return;
+  if (selectedTags.includes(n)) setSelectedTags(selectedTags.filter(t => t !== n));
+  else setSelectedTags([...selectedTags, n]);
+}
+
+function addTagFromInput(): void {
+  const input = document.getElementById('tagAddInput') as HTMLInputElement | null;
+  if (!input) return;
+  const value = normalizeTagName(input.value || '');
+  if (!value) return;
+  mergeTagNames([value]);
+  setSelectedTags([...selectedTags, value]);
+  input.value = '';
+}
+
+async function initializeTagControls(): Promise<void> {
+  await refreshAllTagNames();
+  renderTagChips();
+  const addBtn = document.getElementById('tagAddBtn') as HTMLButtonElement | null;
+  const addInput = document.getElementById('tagAddInput') as HTMLInputElement | null;
+  addBtn?.addEventListener('click', addTagFromInput);
+  addInput?.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      addTagFromInput();
+    }
+  });
+}
+
 function captureFormSnapshot(): TaskRow {
   const mode = (el<HTMLSelectElement>('isRecurring').value as RecurrenceUIMode);
   const recurrence = buildRecurrenceFromUI();
-  const tags = (el<HTMLInputElement>('tags').value || '').split(',').map(s => s.trim()).filter(Boolean);
+  const tags = getSelectedTags();
   const requireCommentEl = document.getElementById('requireCompleteComment') as HTMLInputElement | null;
   const snapshot: any = {
     TITLE: el<HTMLInputElement>('title').value.trim(),
@@ -518,7 +619,7 @@ function populateForm(t: TaskRow): void {
   el<HTMLInputElement>('taskId').value = t.ID ? String(t.ID) : '';
   el<HTMLInputElement>('title').value = t.TITLE || '';
   el<HTMLTextAreaElement>('description').value = (t.DESCRIPTION as any) || '';
-  el<HTMLInputElement>('tags').value = (t.TAGS || []).join(', ');
+  setSelectedTags((t.TAGS || []).slice(), { silent: true });
   el<HTMLInputElement>('dueAt').value = formatDateInput(t.DUE_AT);
   const mode = inferRecurrenceModeFromDb(t);
   el<HTMLSelectElement>('isRecurring').value = mode;
@@ -576,7 +677,7 @@ async function onSave() {
   const payload = {
     title: el<HTMLInputElement>('title').value.trim(),
     description: el<HTMLTextAreaElement>('description').value.trim() || null,
-    tags: (el<HTMLInputElement>('tags').value || '').split(',').map(s=>s.trim()).filter(Boolean),
+    tags: getSelectedTags(),
     dueAt: el<HTMLInputElement>('dueAt').value || null,
     isRecurring: mode !== 'once',
     startDate,
@@ -638,6 +739,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   // weekly checkboxes
   Array.from(el<HTMLDivElement>('weeklyDows').querySelectorAll('input[type="checkbox"]')).forEach(b => b.addEventListener('change', requestPreview));
 
+  await initializeTagControls();
   el<HTMLButtonElement>('saveBtn').addEventListener('click', onSave);
   el<HTMLButtonElement>('duplicateBtn').addEventListener('click', onDuplicate);
   el<HTMLButtonElement>('deleteBtn').addEventListener('click', onDelete);
