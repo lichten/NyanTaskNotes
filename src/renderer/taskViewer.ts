@@ -311,7 +311,56 @@ async function loadTasks(): Promise<void> {
   }
 }
 
+async function addOneTimeTask(): Promise<void> {
+  const input = el<HTMLInputElement>('onceTitle');
+  const button = el<HTMLButtonElement>('onceAddBtn');
+  const title = input.value.trim();
+  if (!title) {
+    input.focus();
+    return;
+  }
+  input.disabled = true;
+  button.disabled = true;
+  try {
+    const todayStr = ymd(new Date());
+    const result = await window.electronAPI.createTask({
+      title,
+      description: null,
+      startDate: todayStr,
+      startTime: null,
+      dueAt: null,
+      isRecurring: false,
+      requireCompleteComment: false,
+      recurrence: null,
+      tags: ['Only Once']
+    });
+    if (!result || !result.success) {
+      throw new Error('タスクの作成に失敗しました');
+    }
+    input.value = '';
+    await refreshTagFilters({ preserveSelection: true });
+    await loadTasks();
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (typeof window.alert === 'function') {
+      window.alert(`単発タスクの追加に失敗しました: ${message}`);
+    }
+    console.error('addOneTimeTask error', e);
+  } finally {
+    input.disabled = false;
+    button.disabled = false;
+    input.focus();
+  }
+}
+
 window.addEventListener('DOMContentLoaded', async () => {
+  el<HTMLButtonElement>('onceAddBtn').addEventListener('click', () => { void addOneTimeTask(); });
+  el<HTMLInputElement>('onceTitle').addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      void addOneTimeTask();
+    }
+  });
   el<HTMLSelectElement>('statusFilter').addEventListener('change', () => loadTasks());
   el<HTMLButtonElement>('refreshBtn').addEventListener('click', async () => {
     await refreshTagFilters({ preserveSelection: true });
