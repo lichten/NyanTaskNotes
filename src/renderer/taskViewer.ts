@@ -161,10 +161,8 @@ async function refreshTagFilters(options: { preserveSelection?: boolean } = {}):
 }
 
 async function loadTasks(): Promise<void> {
-  const query = el<HTMLInputElement>('search').value.trim();
   const occStatus = el<HTMLSelectElement>('statusFilter').value.trim();
   const params: any = {};
-  if (query) params.query = query;
   if (occStatus) params.status = occStatus;
   // 範囲: 過去12か月〜24か月後（上部に「今日」を表示するため過去も取得）
   const today = new Date();
@@ -314,7 +312,6 @@ async function loadTasks(): Promise<void> {
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
-  el<HTMLInputElement>('search').addEventListener('input', () => loadTasks());
   el<HTMLSelectElement>('statusFilter').addEventListener('change', () => loadTasks());
   el<HTMLButtonElement>('refreshBtn').addEventListener('click', async () => {
     await refreshTagFilters({ preserveSelection: true });
