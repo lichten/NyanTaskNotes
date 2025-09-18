@@ -15,6 +15,10 @@ type Task = {
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
+let allTagFilters: string[] = [];
+const activeTagFilters = new Set<string>();
+let showUntaggedOnly = false;
+
 function formatDateInput(dateStr?: string | null): string {
   if (!dateStr) return '';
   if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
@@ -69,11 +73,96 @@ function nextMonthlyDate(day: number, from: Date): string {
   return ymd(clampDay(nextYear, nextMonth, day));
 }
 
+function normalizeTags(value: any): string[] {
+  if (Array.isArray(value)) return value.map(v => String(v)).filter(Boolean);
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return value.split(',').map(v => v.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function matchesTagFilters(row: any): boolean {
+  const tags = normalizeTags(row.TAGS);
+  if (showUntaggedOnly) return tags.length === 0;
+  if (activeTagFilters.size === 0) return true;
+  return tags.some(tag => activeTagFilters.has(tag));
+}
+
+function toggleTagFilter(name: string): void {
+  if (showUntaggedOnly) {
+    showUntaggedOnly = false;
+  }
+  if (activeTagFilters.has(name)) activeTagFilters.delete(name);
+  else activeTagFilters.add(name);
+  renderTagFilterChips();
+  loadTasks();
+}
+
+function toggleUntaggedFilter(): void {
+  showUntaggedOnly = !showUntaggedOnly;
+  if (showUntaggedOnly) {
+    activeTagFilters.clear();
+  }
+  renderTagFilterChips();
+  loadTasks();
+}
+
+function renderTagFilterChips(): void {
+  const wrap = el<HTMLDivElement>('tagFilterBar');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  const fragment = document.createDocumentFragment();
+
+  if (allTagFilters.length === 0) {
+    const placeholder = document.createElement('span');
+    placeholder.className = 'tag-chip disabled';
+    placeholder.textContent = 'タグはまだありません';
+    placeholder.title = 'タスクにタグが追加されるとここに表示されます';
+    fragment.appendChild(placeholder);
+  } else {
+    allTagFilters.forEach(tag => {
+      const chip = document.createElement('span');
+      chip.className = 'tag-chip' + (activeTagFilters.has(tag) ? ' active' : '');
+      chip.textContent = tag;
+      chip.title = activeTagFilters.has(tag) ? `タグ「${tag}」をフィルタから外します` : `タグ「${tag}」のタスクを表示します`;
+      chip.addEventListener('click', () => toggleTagFilter(tag));
+      fragment.appendChild(chip);
+    });
+  }
+
+  const untaggedChip = document.createElement('span');
+  untaggedChip.className = 'tag-chip' + (showUntaggedOnly ? ' active' : '');
+  untaggedChip.textContent = 'タグなし';
+  untaggedChip.title = showUntaggedOnly ? 'タグなしフィルタを解除します' : 'タグが設定されていないタスクのみ表示します';
+  untaggedChip.addEventListener('click', toggleUntaggedFilter);
+  fragment.appendChild(untaggedChip);
+
+  wrap.appendChild(fragment);
+}
+
+async function refreshTagFilters(options: { preserveSelection?: boolean } = {}): Promise<void> {
+  try {
+    const fetched = await window.electronAPI.listTaskTags();
+    const nextSet = new Set<string>((fetched || []).map((name: string) => name.trim()).filter((name: string) => name.length > 0));
+    const next = Array.from(nextSet).sort((a, b) => a.localeCompare(b));
+    if (options.preserveSelection !== false) {
+      for (const tag of Array.from(activeTagFilters)) {
+        if (!next.includes(tag)) activeTagFilters.delete(tag);
+      }
+    } else {
+      activeTagFilters.clear();
+    }
+    allTagFilters = next;
+  } catch {
+    allTagFilters = [];
+    activeTagFilters.clear();
+  }
+  renderTagFilterChips();
+}
+
 async function loadTasks(): Promise<void> {
-  const query = el<HTMLInputElement>('search').value.trim();
   const occStatus = el<HTMLSelectElement>('statusFilter').value.trim();
   const params: any = {};
-  if (query) params.query = query;
   if (occStatus) params.status = occStatus;
   // 範囲: 過去12か月〜24か月後（上部に「今日」を表示するため過去も取得）
   const today = new Date();
@@ -86,9 +175,10 @@ async function loadTasks(): Promise<void> {
   params.to = ymd(to);
 
   const occs = await window.electronAPI.listOccurrences(params);
+  const filteredOccs = occs.filter((o: any) => matchesTagFilters(o));
   const list = el<HTMLDivElement>('taskList');
   list.innerHTML = '';
-  if (!occs.length) {
+  if (!filteredOccs.length) {
     list.innerHTML = '<div style="color:#666;">該当するオカレンスはありません。</div>';
     return;
   }
@@ -126,7 +216,7 @@ async function loadTasks(): Promise<void> {
     const d = new Date(s);
     return new Date(d.getFullYear(), d.getMonth(), d.getDate());
   };
-  for (const o of occs) {
+  for (const o of filteredOccs) {
     const d = toDate(o.SCHEDULED_DATE);
     let key: string;
     if (o.OCC_STATUS === 'done' && d < todayStart) {
@@ -172,6 +262,13 @@ async function loadTasks(): Promise<void> {
       titleRow.appendChild(titleSpan);
       titleRow.appendChild(editBtn);
       left.appendChild(titleRow);
+      const description = typeof o.DESCRIPTION === 'string' ? o.DESCRIPTION.trim() : '';
+      if (description.length > 0) {
+        const descRow = document.createElement('div');
+        descRow.className = 'description';
+        descRow.textContent = description;
+        left.appendChild(descRow);
+      }
       const metaRow = document.createElement('div');
       metaRow.className = 'meta';
       metaRow.textContent = `予定日: ${formatDateWithWeekday(o.SCHEDULED_DATE)} ・ タスク: ${o.TASK_ID} ・ 状態: ${o.OCC_STATUS}`;
@@ -214,9 +311,61 @@ async function loadTasks(): Promise<void> {
   }
 }
 
+async function addOneTimeTask(): Promise<void> {
+  const input = el<HTMLInputElement>('onceTitle');
+  const button = el<HTMLButtonElement>('onceAddBtn');
+  const title = input.value.trim();
+  if (!title) {
+    input.focus();
+    return;
+  }
+  input.disabled = true;
+  button.disabled = true;
+  try {
+    const todayStr = ymd(new Date());
+    const result = await window.electronAPI.createTask({
+      title,
+      description: null,
+      startDate: todayStr,
+      startTime: null,
+      dueAt: null,
+      isRecurring: false,
+      requireCompleteComment: false,
+      recurrence: null,
+      tags: ['Only Once']
+    });
+    if (!result || !result.success) {
+      throw new Error('タスクの作成に失敗しました');
+    }
+    input.value = '';
+    await refreshTagFilters({ preserveSelection: true });
+    await loadTasks();
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (typeof window.alert === 'function') {
+      window.alert(`単発タスクの追加に失敗しました: ${message}`);
+    }
+    console.error('addOneTimeTask error', e);
+  } finally {
+    input.disabled = false;
+    button.disabled = false;
+    input.focus();
+  }
+}
+
 window.addEventListener('DOMContentLoaded', async () => {
-  el<HTMLInputElement>('search').addEventListener('input', () => loadTasks());
+  el<HTMLButtonElement>('onceAddBtn').addEventListener('click', () => { void addOneTimeTask(); });
+  el<HTMLInputElement>('onceTitle').addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      void addOneTimeTask();
+    }
+  });
   el<HTMLSelectElement>('statusFilter').addEventListener('change', () => loadTasks());
-  el<HTMLButtonElement>('refreshBtn').addEventListener('click', () => loadTasks());
+  el<HTMLButtonElement>('refreshBtn').addEventListener('click', async () => {
+    await refreshTagFilters({ preserveSelection: true });
+    await loadTasks();
+  });
+  await refreshTagFilters({ preserveSelection: true });
   await loadTasks();
 });

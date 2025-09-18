@@ -760,7 +760,18 @@ export class TaskDatabase {
                  LEFT JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID
                  ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
                  ORDER BY O.SCHEDULED_DATE ASC, O.ID ASC`;
-    return this.all<any>(sql, binds);
+    const rows = await this.all<any>(sql, binds);
+    if (!rows.length) return rows;
+    const cache = new Map<number, string[]>();
+    const uniqueTaskIds = Array.from(new Set(rows.map(r => Number(r.TASK_ID))));
+    for (const taskId of uniqueTaskIds) {
+      cache.set(taskId, await this.getTagsForTask(taskId));
+    }
+    for (const row of rows) {
+      const taskId = Number(row.TASK_ID);
+      row.TAGS = cache.get(taskId) || [];
+    }
+    return rows;
   }
 
   async completeOccurrence(occurrenceId: number, options: { comment?: string } = {}): Promise<void> {
