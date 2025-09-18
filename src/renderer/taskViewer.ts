@@ -264,6 +264,13 @@ async function loadTasks(): Promise<void> {
       titleRow.appendChild(titleSpan);
       titleRow.appendChild(editBtn);
       left.appendChild(titleRow);
+      const description = typeof o.DESCRIPTION === 'string' ? o.DESCRIPTION.trim() : '';
+      if (description.length > 0) {
+        const descRow = document.createElement('div');
+        descRow.className = 'description';
+        descRow.textContent = description;
+        left.appendChild(descRow);
+      }
       const metaRow = document.createElement('div');
       metaRow.className = 'meta';
       metaRow.textContent = `予定日: ${formatDateWithWeekday(o.SCHEDULED_DATE)} ・ タスク: ${o.TASK_ID} ・ 状態: ${o.OCC_STATUS}`;
