@@ -164,7 +164,7 @@
       removeBtn.ariaLabel = `${tag} を削除`;
       removeBtn.onclick = () => {
         state.filters.tags = state.filters.tags.filter(t => t !== tag);
-        renderSelectedTags();
+        applyFilters();
       };
       chip.appendChild(name);
       chip.appendChild(removeBtn);
@@ -185,7 +185,7 @@
     }
     if (!state.filters.tags.includes(matched)) {
       state.filters.tags.push(matched);
-      renderSelectedTags();
+      applyFilters();
     }
     input.value = '';
   }
@@ -409,6 +409,14 @@
         ev.preventDefault();
         addTagFromInput();
       }
+    });
+    const autoApply = (): void => { applyFilters(); };
+    el<HTMLSelectElement>('recurrenceSelect').addEventListener('change', autoApply);
+    ['startFrom', 'startTo', 'dueFrom', 'dueTo'].forEach(id => {
+      el<HTMLInputElement>(id).addEventListener('input', autoApply);
+    });
+    ['onlyRequireComment', 'onlyHasCount', 'onlyHasHorizon'].forEach(id => {
+      el<HTMLInputElement>(id).addEventListener('change', autoApply);
     });
     el<HTMLButtonElement>('applyFilters').addEventListener('click', () => { applyFilters(); });
     el<HTMLButtonElement>('resetFilters').addEventListener('click', () => { resetFilters(); });

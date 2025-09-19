@@ -115,6 +115,18 @@ export function registerTaskIpcHandlers(opts: {
     }
   });
 
+  ipcMain.handle('occ:defer', async (_event, id: number, newDate?: string | null) => {
+    const db = getTaskDb();
+    if (!db) return { success: false };
+    try {
+      await (db as any).deferOccurrence(id, newDate ?? null);
+      return { success: true };
+    } catch (e) {
+      log.error('occ:defer error', e);
+      throw e;
+    }
+  });
+
   // Task tag helpers
   ipcMain.handle('task-tags:list', async () => {
     const db = getTaskDb();
