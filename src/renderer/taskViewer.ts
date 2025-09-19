@@ -46,6 +46,12 @@ function formatDateWithWeekday(dateStr?: string | null): string {
   return `${base} (${w})`;
 }
 
+function getEffectiveDate(row: any): string {
+  const deferred = typeof row?.DEFERRED_DATE === 'string' ? row.DEFERRED_DATE.trim() : '';
+  if (deferred) return deferred;
+  return row?.SCHEDULED_DATE ?? '';
+}
+
 function ymd(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -217,7 +223,9 @@ async function loadTasks(): Promise<void> {
     return new Date(d.getFullYear(), d.getMonth(), d.getDate());
   };
   for (const o of filteredOccs) {
-    const d = toDate(o.SCHEDULED_DATE);
+    const effectiveDateStr = getEffectiveDate(o);
+    if (!effectiveDateStr) continue;
+    const d = toDate(effectiveDateStr);
     let key: string;
     if (o.OCC_STATUS === 'done' && d < todayStart) {
       continue;
@@ -242,7 +250,13 @@ async function loadTasks(): Promise<void> {
     h.style.fontWeight = '600';
     h.textContent = `${b.label} (${items.length})`;
     list.appendChild(h);
-    items.sort((a, b) => (a.SCHEDULED_DATE as string).localeCompare(b.SCHEDULED_DATE as string) || (a.SCHEDULED_TIME || '').localeCompare(b.SCHEDULED_TIME || ''));
+    items.sort((a, b) => {
+      const dateA = getEffectiveDate(a);
+      const dateB = getEffectiveDate(b);
+      const cmpDate = String(dateA || '').localeCompare(String(dateB || ''));
+      if (cmpDate !== 0) return cmpDate;
+      return (a.SCHEDULED_TIME || '').localeCompare(b.SCHEDULED_TIME || '');
+    });
     items.forEach((o: any) => {
       const div = document.createElement('div');
       div.className = 'task' + (o.OCC_STATUS === 'done' ? ' done' : '');
@@ -271,7 +285,13 @@ async function loadTasks(): Promise<void> {
       }
       const metaRow = document.createElement('div');
       metaRow.className = 'meta';
-      metaRow.textContent = `予定日: ${formatDateWithWeekday(o.SCHEDULED_DATE)} ・ タスク: ${o.TASK_ID} ・ 状態: ${o.OCC_STATUS}`;
+      const effectiveDateStr = getEffectiveDate(o);
+      let metaText = `予定日: ${formatDateWithWeekday(effectiveDateStr) || '-'}`;
+      if (o.DEFERRED_DATE && o.DEFERRED_DATE !== o.SCHEDULED_DATE) {
+        metaText += `（元: ${formatDateWithWeekday(o.SCHEDULED_DATE) || '-'}）`;
+      }
+      metaText += ` ・ タスク: ${o.TASK_ID} ・ 状態: ${o.OCC_STATUS}`;
+      metaRow.textContent = metaText;
       left.appendChild(metaRow);
       const actions = document.createElement('div');
       actions.className = 'actions';
@@ -295,15 +315,48 @@ async function loadTasks(): Promise<void> {
             await window.electronAPI.completeOccurrence(o.OCCURRENCE_ID, options);
             await loadTasks();
           };
+          actions.appendChild(btn);
+
+          const deferBtn = document.createElement('button');
+          deferBtn.textContent = '延期する';
+          deferBtn.style.marginLeft = '8px';
+          deferBtn.onclick = async () => {
+            const placeholder = formatDateInput(getEffectiveDate(o)) || formatDateInput(o.SCHEDULED_DATE);
+            const input = await window.electronAPI.promptText({
+              title: '延期する日付',
+              label: '延期後の日付 (YYYY-MM-DD)',
+              placeholder: placeholder || 'YYYY-MM-DD',
+              ok: '延期',
+              cancel: 'キャンセル'
+            });
+            if (input === null) return;
+            const value = String(input).trim();
+            try {
+              if (!value) {
+                await window.electronAPI.deferOccurrence(o.OCCURRENCE_ID, null);
+              } else if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+                window.alert('延期後の日付は YYYY-MM-DD 形式で入力してください。');
+                return;
+              } else {
+                await window.electronAPI.deferOccurrence(o.OCCURRENCE_ID, value);
+              }
+              await loadTasks();
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              window.alert(`延期処理に失敗しました: ${message}`);
+            }
+          };
+          actions.appendChild(deferBtn);
         } else {
           btn.textContent = '完了済み';
           btn.disabled = true;
+          actions.appendChild(btn);
         }
       } else {
         btn.textContent = '単発タスク';
         btn.disabled = true;
+        actions.appendChild(btn);
       }
-      actions.appendChild(btn);
       div.appendChild(left);
       div.appendChild(actions);
       list.appendChild(div);

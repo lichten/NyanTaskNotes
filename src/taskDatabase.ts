@@ -85,6 +85,12 @@ export class TaskDatabase {
     if (!hasReqComment) {
       await this.run("ALTER TABLE TASKS ADD COLUMN REQUIRE_COMPLETE_COMMENT INTEGER NOT NULL DEFAULT 0");
     }
+
+    const ocols: Array<{ name: string }> = await this.all<any>("PRAGMA table_info('TASK_OCCURRENCES')");
+    const hasDeferred = ocols.some(c => String(c.name).toUpperCase() === 'DEFERRED_DATE');
+    if (!hasDeferred) {
+      await this.run("ALTER TABLE TASK_OCCURRENCES ADD COLUMN DEFERRED_DATE TEXT");
+    }
   }
 
   private async logEvent(kind: string, source: 'user' | 'system', taskId?: number | null, occurrenceId?: number | null, details?: any): Promise<void> {
@@ -160,6 +166,20 @@ export class TaskDatabase {
     const m = String(dt.getMonth() + 1).padStart(2, '0');
     const da = String(dt.getDate()).padStart(2, '0');
     return `${y}-${m}-${da}`;
+  }
+
+  private normalizeDateOnly(value?: string | null): string {
+    const raw = (value ?? '').trim();
+    if (!raw) throw new Error('延期日付が指定されていません');
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new Error(`延期日付の形式が不正です: ${raw}`);
+    }
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, '0');
+    const d = String(parsed.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   }
 
   private async ensureRecurringMonthlyOccurrences(monthsAhead: number = 2): Promise<void> {
@@ -751,7 +771,7 @@ export class TaskDatabase {
     if (params.to) { where.push('O.SCHEDULED_DATE <= ?'); binds.push(params.to); }
     if (params.status) { where.push('O.STATUS = ?'); binds.push(params.status); }
     if (params.query) { where.push('(T.TITLE LIKE ? OR T.DESCRIPTION LIKE ?)'); binds.push(`%${params.query}%`, `%${params.query}%`); }
-    const sql = `SELECT O.ID AS OCCURRENCE_ID, O.SCHEDULED_DATE, O.SCHEDULED_TIME, O.STATUS AS OCC_STATUS, O.COMPLETED_AT,
+    const sql = `SELECT O.ID AS OCCURRENCE_ID, O.SCHEDULED_DATE, O.SCHEDULED_TIME, O.DEFERRED_DATE, O.STATUS AS OCC_STATUS, O.COMPLETED_AT,
                         T.ID AS TASK_ID, T.TITLE, T.DESCRIPTION,
                         T.START_DATE, T.START_TIME, T.IS_RECURRING, T.REQUIRE_COMPLETE_COMMENT,
                         R.FREQ, R.MONTHLY_DAY, R.COUNT
@@ -877,6 +897,29 @@ export class TaskDatabase {
         try { await this.logEvent('occ.autocreate', 'system', Number(occ.TASK_ID), newId, { reason: 'complete.next.daily', date: nextDate, anchor: (occ as any).INTERVAL_ANCHOR }); } catch {}
       }
     }
+  }
+
+  async deferOccurrence(occurrenceId: number, newDate: string | null): Promise<void> {
+    const occ = await this.get<any>(
+      `SELECT ID, TASK_ID, SCHEDULED_DATE, DEFERRED_DATE FROM TASK_OCCURRENCES WHERE ID = ?`,
+      [occurrenceId]
+    );
+    if (!occ) throw new Error('指定された発生が見つかりません');
+    const normalized = (newDate == null || String(newDate).trim() === '')
+      ? null
+      : this.normalizeDateOnly(newDate);
+    const now = this.nowIso();
+    await this.run(
+      `UPDATE TASK_OCCURRENCES SET DEFERRED_DATE = ?, UPDATED_AT = ? WHERE ID = ?`,
+      [normalized, now, occurrenceId]
+    );
+    try {
+      await this.logEvent('occ.defer', 'user', Number(occ.TASK_ID), occurrenceId, {
+        scheduled: occ.SCHEDULED_DATE,
+        previousDeferred: occ.DEFERRED_DATE ?? null,
+        deferred: normalized
+      });
+    } catch {}
   }
 
   private get<T>(sql: string, params: any[] = []): Promise<T | undefined> {
