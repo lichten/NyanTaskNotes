@@ -19,6 +19,8 @@ let allTagFilters: string[] = [];
 const activeTagFilters = new Set<string>();
 let showUntaggedOnly = false;
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 function formatDateInput(dateStr?: string | null): string {
   if (!dateStr) return '';
   if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
@@ -202,15 +204,16 @@ async function loadTasks(): Promise<void> {
 
   type Bucket = { key: string; label: string; order: number };
   const buckets: Bucket[] = [
-    { key: 'pastOrToday', label: '今日', order: 0 },
-    { key: 'tomorrow', label: '明日', order: 1 },
-    { key: 'byWeekend', label: '週末まで', order: 2 },
-    { key: 'within7', label: '7日以内', order: 3 },
-    { key: 'thisMonth', label: '今月中', order: 4 },
-    { key: 'within31', label: '31日以内', order: 5 },
-    { key: 'thisYear', label: '今年中', order: 6 },
-    { key: 'within12m', label: '12か月以内', order: 7 },
-    { key: 'gt12m', label: '1年以上あと', order: 8 }
+    { key: 'overdueOnce', label: '期限超過（単発）', order: 0 },
+    { key: 'pastOrToday', label: '今日', order: 1 },
+    { key: 'tomorrow', label: '明日', order: 2 },
+    { key: 'byWeekend', label: '週末まで', order: 3 },
+    { key: 'within7', label: '7日以内', order: 4 },
+    { key: 'thisMonth', label: '今月中', order: 5 },
+    { key: 'within31', label: '31日以内', order: 6 },
+    { key: 'thisYear', label: '今年中', order: 7 },
+    { key: 'within12m', label: '12か月以内', order: 8 },
+    { key: 'gt12m', label: '1年以上あと', order: 9 }
   ];
   const groups = new Map<string, any[]>();
   buckets.forEach(b => groups.set(b.key, []));
@@ -226,10 +229,26 @@ async function loadTasks(): Promise<void> {
     const effectiveDateStr = getEffectiveDate(o);
     if (!effectiveDateStr) continue;
     const d = toDate(effectiveDateStr);
-    let key: string;
     if (o.OCC_STATUS === 'done' && d < todayStart) {
       continue;
     }
+    (o as any).__overdueDays = undefined;
+    (o as any).__overdueDueDate = undefined;
+    const isSingleTask = Number(o.IS_RECURRING || 0) === 0;
+    if (isSingleTask) {
+      const dueBase = formatDateInput((o as any).DUE_AT) || formatDateInput(o.SCHEDULED_DATE) || effectiveDateStr;
+      if (dueBase) {
+        const dueDate = toDate(dueBase);
+        const overdueDays = Math.floor((todayStart.getTime() - dueDate.getTime()) / MS_PER_DAY);
+        if (overdueDays > 0) {
+          (o as any).__overdueDays = overdueDays;
+          (o as any).__overdueDueDate = dueBase;
+          groups.get('overdueOnce')!.push(o);
+          continue;
+        }
+      }
+    }
+    let key: string;
     if (d <= todayStart) key = 'pastOrToday';
     else if (d.getTime() === tomorrow.getTime()) key = 'tomorrow';
     else if (d <= endOfWeek) key = 'byWeekend';
@@ -250,12 +269,20 @@ async function loadTasks(): Promise<void> {
     h.style.fontWeight = '600';
     h.textContent = `${b.label} (${items.length})`;
     list.appendChild(h);
-    items.sort((a, b) => {
-      const dateA = getEffectiveDate(a);
-      const dateB = getEffectiveDate(b);
+    const bucketKey = b.key;
+    items.sort((itemA, itemB) => {
+      if (bucketKey === 'overdueOnce') {
+        const dueA = String((itemA as any).__overdueDueDate || getEffectiveDate(itemA) || '');
+        const dueB = String((itemB as any).__overdueDueDate || getEffectiveDate(itemB) || '');
+        const cmpDue = dueA.localeCompare(dueB);
+        if (cmpDue !== 0) return cmpDue;
+        return (itemA.SCHEDULED_TIME || '').localeCompare(itemB.SCHEDULED_TIME || '');
+      }
+      const dateA = getEffectiveDate(itemA);
+      const dateB = getEffectiveDate(itemB);
       const cmpDate = String(dateA || '').localeCompare(String(dateB || ''));
       if (cmpDate !== 0) return cmpDate;
-      return (a.SCHEDULED_TIME || '').localeCompare(b.SCHEDULED_TIME || '');
+      return (itemA.SCHEDULED_TIME || '').localeCompare(itemB.SCHEDULED_TIME || '');
     });
     items.forEach((o: any) => {
       const div = document.createElement('div');
@@ -282,6 +309,23 @@ async function loadTasks(): Promise<void> {
         descRow.className = 'description';
         descRow.textContent = description;
         left.appendChild(descRow);
+      }
+      const overdueDays = Number((o as any).__overdueDays || 0);
+      if (overdueDays > 0) {
+        const overdueRow = document.createElement('div');
+        overdueRow.className = 'overdue-info';
+        const badge = document.createElement('span');
+        badge.className = 'overdue-badge';
+        badge.textContent = overdueDays === 1 ? '1日前' : `${overdueDays}日前`;
+        overdueRow.appendChild(badge);
+        const dueLabel = formatDateWithWeekday((o as any).__overdueDueDate);
+        if (dueLabel) {
+          const dueSpan = document.createElement('span');
+          dueSpan.textContent = `（期日: ${dueLabel}）`;
+          dueSpan.style.marginLeft = '6px';
+          overdueRow.appendChild(dueSpan);
+        }
+        left.appendChild(overdueRow);
       }
       const metaRow = document.createElement('div');
       metaRow.className = 'meta';
