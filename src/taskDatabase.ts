@@ -772,7 +772,7 @@ export class TaskDatabase {
     if (params.status) { where.push('O.STATUS = ?'); binds.push(params.status); }
     if (params.query) { where.push('(T.TITLE LIKE ? OR T.DESCRIPTION LIKE ?)'); binds.push(`%${params.query}%`, `%${params.query}%`); }
     const sql = `SELECT O.ID AS OCCURRENCE_ID, O.SCHEDULED_DATE, O.SCHEDULED_TIME, O.DEFERRED_DATE, O.STATUS AS OCC_STATUS, O.COMPLETED_AT,
-                        T.ID AS TASK_ID, T.TITLE, T.DESCRIPTION,
+                        T.ID AS TASK_ID, T.TITLE, T.DESCRIPTION, T.DUE_AT,
                         T.START_DATE, T.START_TIME, T.IS_RECURRING, T.REQUIRE_COMPLETE_COMMENT,
                         R.FREQ, R.MONTHLY_DAY, R.COUNT
                  FROM TASK_OCCURRENCES O
