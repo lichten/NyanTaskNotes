@@ -115,18 +115,35 @@ function toggleUntaggedFilter(): void {
   loadTasks();
 }
 
+function turnAllTagFiltersOn(): void {
+  showUntaggedOnly = false;
+  activeTagFilters.clear();
+  allTagFilters.forEach(tag => activeTagFilters.add(tag));
+  renderTagFilterChips();
+  loadTasks();
+}
+
+function turnAllTagFiltersOff(): void {
+  showUntaggedOnly = false;
+  activeTagFilters.clear();
+  renderTagFilterChips();
+  loadTasks();
+}
+
 function renderTagFilterChips(): void {
   const wrap = el<HTMLDivElement>('tagFilterBar');
   if (!wrap) return;
   wrap.innerHTML = '';
   const fragment = document.createDocumentFragment();
+  const chipRow = document.createElement('div');
+  chipRow.className = 'tag-filter-chip-row';
 
   if (allTagFilters.length === 0) {
     const placeholder = document.createElement('span');
     placeholder.className = 'tag-chip disabled';
     placeholder.textContent = 'タグはまだありません';
     placeholder.title = 'タスクにタグが追加されるとここに表示されます';
-    fragment.appendChild(placeholder);
+    chipRow.appendChild(placeholder);
   } else {
     allTagFilters.forEach(tag => {
       const chip = document.createElement('span');
@@ -134,7 +151,7 @@ function renderTagFilterChips(): void {
       chip.textContent = tag;
       chip.title = activeTagFilters.has(tag) ? `タグ「${tag}」をフィルタから外します` : `タグ「${tag}」のタスクを表示します`;
       chip.addEventListener('click', () => toggleTagFilter(tag));
-      fragment.appendChild(chip);
+      chipRow.appendChild(chip);
     });
   }
 
@@ -143,7 +160,25 @@ function renderTagFilterChips(): void {
   untaggedChip.textContent = 'タグなし';
   untaggedChip.title = showUntaggedOnly ? 'タグなしフィルタを解除します' : 'タグが設定されていないタスクのみ表示します';
   untaggedChip.addEventListener('click', toggleUntaggedFilter);
-  fragment.appendChild(untaggedChip);
+  chipRow.appendChild(untaggedChip);
+
+  fragment.appendChild(chipRow);
+
+  const actions = document.createElement('div');
+  actions.className = 'tag-filter-actions';
+  const allOnBtn = document.createElement('button');
+  allOnBtn.type = 'button';
+  allOnBtn.textContent = 'ALL ON';
+  allOnBtn.title = 'すべてのタグを有効にします（「タグなし」は除外）';
+  allOnBtn.addEventListener('click', turnAllTagFiltersOn);
+  const allOffBtn = document.createElement('button');
+  allOffBtn.type = 'button';
+  allOffBtn.textContent = 'ALL OFF';
+  allOffBtn.title = 'すべてのタグフィルタを解除します';
+  allOffBtn.addEventListener('click', turnAllTagFiltersOff);
+  actions.appendChild(allOnBtn);
+  actions.appendChild(allOffBtn);
+  fragment.appendChild(actions);
 
   wrap.appendChild(fragment);
 }
