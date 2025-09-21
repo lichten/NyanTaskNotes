@@ -1013,6 +1013,30 @@ export class TaskDatabase {
     return rows.map(r => r.NAME as string);
   }
 
+  async listTagInfos(): Promise<Array<{ id: number; name: string; createdAt: string | null; updatedAt: string | null }>> {
+    const rows = await this.all<any>(`SELECT ID, NAME, CREATED_AT, UPDATED_AT FROM TAG_INFOS ORDER BY NAME ASC`);
+    return rows.map(row => ({
+      id: Number(row.ID),
+      name: String(row.NAME ?? ''),
+      createdAt: row.CREATED_AT ?? null,
+      updatedAt: row.UPDATED_AT ?? null
+    }));
+  }
+
+  async renameTag(tagId: number, newName: string): Promise<void> {
+    const id = Number(tagId);
+    if (!Number.isInteger(id) || id <= 0) throw new Error('タグIDが不正です');
+    const name = String(newName ?? '').trim();
+    if (!name) throw new Error('タグ名を入力してください');
+    const tag = await this.get<any>('SELECT ID, NAME FROM TAG_INFOS WHERE ID = ?', [id]);
+    if (!tag) throw new Error('タグが見つかりません');
+    if (String(tag.NAME ?? '').trim() === name) return;
+    const dup = await this.get<any>('SELECT ID FROM TAG_INFOS WHERE NAME = ? AND ID != ?', [name, id]);
+    if (dup) throw new Error('同名のタグが既に存在します');
+    const now = this.nowIso();
+    await this.run('UPDATE TAG_INFOS SET NAME = ?, UPDATED_AT = ? WHERE ID = ?', [name, now, id]);
+  }
+
   async listTaskEvents(params: { taskId: number; limit?: number }): Promise<any[]> {
     const taskId = Number(params.taskId);
     const limit = Math.max(1, Math.min(100, Number(params.limit ?? 10)));

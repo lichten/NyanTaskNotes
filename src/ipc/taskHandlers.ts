@@ -139,6 +139,29 @@ export function registerTaskIpcHandlers(opts: {
     }
   });
 
+  ipcMain.handle('task-tags:list-infos', async () => {
+    const db = getTaskDb();
+    if (!db) return [];
+    try {
+      return await (db as any).listTagInfos();
+    } catch (e) {
+      log.error('task-tags:list-infos error', e);
+      throw e;
+    }
+  });
+
+  ipcMain.handle('task-tags:rename', async (_event, id: number, name: string) => {
+    const db = getTaskDb();
+    if (!db) return { success: false, message: 'タスクDBが初期化されていません' };
+    try {
+      await (db as any).renameTag(id, name);
+      return { success: true };
+    } catch (e: any) {
+      log.error('task-tags:rename error', e);
+      return { success: false, message: e?.message || 'タグ名の更新に失敗しました' };
+    }
+  });
+
   // Task events (logs)
   ipcMain.handle('events:list', async (_event, params: { taskId: number; limit?: number } ) => {
     const db = getTaskDb();
