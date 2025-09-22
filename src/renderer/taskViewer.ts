@@ -239,7 +239,7 @@ async function loadTasks(): Promise<void> {
 
   type Bucket = { key: string; label: string; order: number };
   const buckets: Bucket[] = [
-    { key: 'overdueOnce', label: '期限超過（単発）', order: 0 },
+    { key: 'overdueOnce', label: '期限超過', order: 0 },
     { key: 'pastOrToday', label: '今日', order: 1 },
     { key: 'tomorrow', label: '明日', order: 2 },
     { key: 'byWeekend', label: '週末まで', order: 3 },
@@ -269,18 +269,16 @@ async function loadTasks(): Promise<void> {
     }
     (o as any).__overdueDays = undefined;
     (o as any).__overdueDueDate = undefined;
-    const isSingleTask = Number(o.IS_RECURRING || 0) === 0;
-    if (isSingleTask) {
-      const dueBase = formatDateInput((o as any).DUE_AT) || formatDateInput(o.SCHEDULED_DATE) || effectiveDateStr;
-      if (dueBase) {
-        const dueDate = toDate(dueBase);
-        const overdueDays = Math.floor((todayStart.getTime() - dueDate.getTime()) / MS_PER_DAY);
-        if (overdueDays > 0) {
-          (o as any).__overdueDays = overdueDays;
-          (o as any).__overdueDueDate = dueBase;
-          groups.get('overdueOnce')!.push(o);
-          continue;
-        }
+    const deferredDateStr = formatDateInput(o.DEFERRED_DATE);
+    const dueBase = deferredDateStr || formatDateInput((o as any).DUE_AT) || formatDateInput(o.SCHEDULED_DATE) || effectiveDateStr;
+    if (o.OCC_STATUS !== 'done' && dueBase) {
+      const dueDate = toDate(dueBase);
+      const overdueDays = Math.floor((todayStart.getTime() - dueDate.getTime()) / MS_PER_DAY);
+      if (overdueDays > 0) {
+        (o as any).__overdueDays = overdueDays;
+        (o as any).__overdueDueDate = dueBase;
+        groups.get('overdueOnce')!.push(o);
+        continue;
       }
     }
     let key: string;
