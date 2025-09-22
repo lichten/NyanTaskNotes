@@ -19,6 +19,14 @@ let allTagFilters: string[] = [];
 const activeTagFilters = new Set<string>();
 let showUntaggedOnly = false;
 
+let deferDialog: HTMLDialogElement | null = null;
+let deferDateInput: HTMLInputElement | null = null;
+let deferApplyButton: HTMLButtonElement | null = null;
+let deferClearButton: HTMLButtonElement | null = null;
+let deferDialogDescription: HTMLDivElement | null = null;
+let currentDeferOccurrence: any | null = null;
+let deferDialogSubmitting = false;
+
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function formatDateInput(dateStr?: string | null): string {
@@ -87,6 +95,147 @@ function normalizeTags(value: any): string[] {
     return value.split(',').map(v => v.trim()).filter(Boolean);
   }
   return [];
+}
+
+function setDeferDialogBusy(busy: boolean): void {
+  if (deferDateInput) deferDateInput.disabled = busy;
+  if (deferApplyButton) deferApplyButton.disabled = busy;
+  if (deferClearButton) deferClearButton.disabled = busy;
+}
+
+async function confirmAndSubmitDefer(newDate: string | null): Promise<void> {
+  if (!currentDeferOccurrence || !currentDeferOccurrence.OCCURRENCE_ID) return;
+  if (deferDialogSubmitting) return;
+  deferDialogSubmitting = true;
+  setDeferDialogBusy(true);
+  try {
+    await window.electronAPI.deferOccurrence(currentDeferOccurrence.OCCURRENCE_ID, newDate);
+    if (deferDialog && deferDialog.open) deferDialog.close();
+    currentDeferOccurrence = null;
+    await loadTasks();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    window.alert(`延期処理に失敗しました: ${message}`);
+  } finally {
+    deferDialogSubmitting = false;
+    setDeferDialogBusy(false);
+  }
+}
+
+function ensureDeferDialog(): void {
+  if (deferDialog) return;
+  const dialog = document.createElement('dialog');
+  dialog.className = 'defer-dialog';
+
+  const form = document.createElement('form');
+  form.method = 'dialog';
+  form.className = 'defer-dialog-form';
+
+  const title = document.createElement('div');
+  title.className = 'defer-dialog-title';
+  title.textContent = '延期する日付';
+  form.appendChild(title);
+
+  const description = document.createElement('div');
+  description.className = 'defer-dialog-description';
+  description.textContent = '延期後の日付を選択してください。';
+  form.appendChild(description);
+  deferDialogDescription = description;
+
+  const fieldWrapper = document.createElement('div');
+  fieldWrapper.className = 'defer-dialog-field';
+  const label = document.createElement('label');
+  label.htmlFor = 'deferDateInput';
+  label.textContent = '延期後の日付';
+  fieldWrapper.appendChild(label);
+  const input = document.createElement('input');
+  input.type = 'date';
+  input.id = 'deferDateInput';
+  input.name = 'deferDate';
+  fieldWrapper.appendChild(input);
+  form.appendChild(fieldWrapper);
+
+  const note = document.createElement('div');
+  note.className = 'defer-dialog-note';
+  note.textContent = '空欄で延期を解除できます。';
+  form.appendChild(note);
+
+  const buttons = document.createElement('div');
+  buttons.className = 'defer-dialog-buttons';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.textContent = 'キャンセル';
+  cancelBtn.addEventListener('click', () => {
+    dialog.close();
+  });
+  buttons.appendChild(cancelBtn);
+
+  const clearBtn = document.createElement('button');
+  clearBtn.type = 'button';
+  clearBtn.textContent = '延期解除';
+  clearBtn.addEventListener('click', () => {
+    if (deferDateInput) deferDateInput.value = '';
+    void confirmAndSubmitDefer(null);
+  });
+  buttons.appendChild(clearBtn);
+  deferClearButton = clearBtn;
+
+  const applyBtn = document.createElement('button');
+  applyBtn.type = 'submit';
+  applyBtn.textContent = '延期';
+  buttons.appendChild(applyBtn);
+  deferApplyButton = applyBtn;
+
+  form.appendChild(buttons);
+
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    if (!deferDateInput) return;
+    const value = deferDateInput.value.trim();
+    void confirmAndSubmitDefer(value ? value : null);
+  });
+
+  dialog.addEventListener('close', () => {
+    currentDeferOccurrence = null;
+    deferDialogSubmitting = false;
+    setDeferDialogBusy(false);
+    if (deferDateInput) deferDateInput.value = '';
+  });
+
+  dialog.appendChild(form);
+  document.body.appendChild(dialog);
+
+  deferDialog = dialog;
+  deferDateInput = input;
+}
+
+function openDeferDialog(occurrence: any): void {
+  if (!occurrence || !occurrence.OCCURRENCE_ID) return;
+  ensureDeferDialog();
+  currentDeferOccurrence = occurrence;
+  setDeferDialogBusy(false);
+  const initialDate = formatDateInput(occurrence.DEFERRED_DATE) || formatDateInput(occurrence.SCHEDULED_DATE) || formatDateInput(getEffectiveDate(occurrence));
+  if (deferDialogDescription) {
+    const currentLabel = formatDateWithWeekday(getEffectiveDate(occurrence)) || '-';
+    const originalLabel = occurrence.DEFERRED_DATE && occurrence.DEFERRED_DATE !== occurrence.SCHEDULED_DATE
+      ? formatDateWithWeekday(occurrence.SCHEDULED_DATE) || '-'
+      : null;
+    deferDialogDescription.textContent = originalLabel
+      ? `延期後の日付を選択してください。（現在: ${currentLabel}／元: ${originalLabel}）`
+      : `延期後の日付を選択してください。（現在: ${currentLabel}）`;
+  }
+  if (deferDateInput) {
+    deferDateInput.value = initialDate || '';
+    deferDateInput.disabled = false;
+  }
+  if (deferDialog && !deferDialog.open) {
+    deferDialog.returnValue = '';
+    deferDialog.showModal();
+    window.requestAnimationFrame(() => {
+      deferDateInput?.focus();
+    });
+  }
 }
 
 function matchesTagFilters(row: any): boolean {
@@ -397,31 +546,8 @@ async function loadTasks(): Promise<void> {
           const deferBtn = document.createElement('button');
           deferBtn.textContent = '延期する';
           deferBtn.style.marginLeft = '8px';
-          deferBtn.onclick = async () => {
-            const placeholder = formatDateInput(getEffectiveDate(o)) || formatDateInput(o.SCHEDULED_DATE);
-            const input = await window.electronAPI.promptText({
-              title: '延期する日付',
-              label: '延期後の日付 (YYYY-MM-DD)',
-              placeholder: placeholder || 'YYYY-MM-DD',
-              ok: '延期',
-              cancel: 'キャンセル'
-            });
-            if (input === null) return;
-            const value = String(input).trim();
-            try {
-              if (!value) {
-                await window.electronAPI.deferOccurrence(o.OCCURRENCE_ID, null);
-              } else if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-                window.alert('延期後の日付は YYYY-MM-DD 形式で入力してください。');
-                return;
-              } else {
-                await window.electronAPI.deferOccurrence(o.OCCURRENCE_ID, value);
-              }
-              await loadTasks();
-            } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
-              window.alert(`延期処理に失敗しました: ${message}`);
-            }
+          deferBtn.onclick = () => {
+            openDeferDialog(o);
           };
           actions.appendChild(deferBtn);
         } else {
@@ -484,6 +610,7 @@ async function addOneTimeTask(): Promise<void> {
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
+  ensureDeferDialog();
   el<HTMLButtonElement>('onceAddBtn').addEventListener('click', () => { void addOneTimeTask(); });
   el<HTMLInputElement>('onceTitle').addEventListener('keydown', event => {
     if (event.key === 'Enter') {
