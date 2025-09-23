@@ -1251,16 +1251,50 @@ export class TaskDatabase {
         await this.run('INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, CREATED_AT, UPDATED_AT) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
           [id, 'monthly', null, null, null, 1, now, now]);
       }
-      // Ensure single occurrence exists
-      const scheduledDate = p.due_at ? (p.due_at.split('T')[0]) : p.start_date;
-      if (scheduledDate) {
-        const exists = await this.get<any>('SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?', [id, scheduledDate]);
-        if (!exists) {
-          await this.run(
+      const scheduledDateRaw = p.due_at ? String(p.due_at) : (p.start_date ?? null);
+      const scheduledDate = scheduledDateRaw ? scheduledDateRaw.split('T')[0] : null;
+      const scheduledTime = p.start_time || null;
+      const occurrences = await this.all<any>(
+        `SELECT ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS FROM TASK_OCCURRENCES WHERE TASK_ID = ? ORDER BY ID ASC`,
+        [id]
+      );
+
+      if (!scheduledDate) {
+        for (const occ of occurrences) {
+          await this.run('DELETE FROM TASK_OCCURRENCES WHERE ID = ?', [occ.ID]);
+          try { await this.logEvent('occ.delete', 'system', id, occ.ID, { reason: 'single.realign.noDate', previousDate: occ.SCHEDULED_DATE, status: occ.STATUS }); } catch {}
+        }
+      } else {
+        let primaryOcc = occurrences.find(o => o.SCHEDULED_DATE === scheduledDate) || null;
+        if (!primaryOcc && occurrences.length) primaryOcc = occurrences[0];
+
+        if (primaryOcc) {
+          const prevDate = primaryOcc.SCHEDULED_DATE;
+          const prevTime = primaryOcc.SCHEDULED_TIME ?? null;
+          const needsUpdate = prevDate !== scheduledDate || (prevTime ?? null) !== (scheduledTime ?? null);
+          if (needsUpdate) {
+            await this.run(
+              `UPDATE TASK_OCCURRENCES SET SCHEDULED_DATE = ?, SCHEDULED_TIME = ?, UPDATED_AT = ? WHERE ID = ?`,
+              [scheduledDate, scheduledTime, now, primaryOcc.ID]
+            );
+            try { await this.logEvent('occ.reschedule', 'system', id, primaryOcc.ID, { reason: 'single.realign', previousDate: prevDate, previousTime: prevTime, newDate: scheduledDate, newTime: scheduledTime }); } catch {}
+            primaryOcc.SCHEDULED_DATE = scheduledDate;
+            primaryOcc.SCHEDULED_TIME = scheduledTime;
+          }
+        } else {
+          const newId = await this.run(
             `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
              VALUES (?, ?, ?, 'pending', ?, ?)`,
-            [id, scheduledDate, p.start_time || null, now, now]
+            [id, scheduledDate, scheduledTime, now, now]
           );
+          primaryOcc = { ID: newId, SCHEDULED_DATE: scheduledDate, SCHEDULED_TIME: scheduledTime, STATUS: 'pending' };
+          try { await this.logEvent('occ.autocreate', 'system', id, newId, { reason: 'single.realign.create', date: scheduledDate }); } catch {}
+        }
+
+        for (const occ of occurrences) {
+          if (primaryOcc && occ.ID === primaryOcc.ID) continue;
+          await this.run('DELETE FROM TASK_OCCURRENCES WHERE ID = ?', [occ.ID]);
+          try { await this.logEvent('occ.delete', 'system', id, occ.ID, { reason: 'single.realign.remove', previousDate: occ.SCHEDULED_DATE, status: occ.STATUS }); } catch {}
         }
       }
     }
