@@ -1,6 +1,7 @@
 import { TaskRow, RecurrenceUIMode, formatDateInput, inferRecurrenceModeFromDb, weeklyArrayFromMask, weeklyMaskFromArray } from './sharedTaskEditor.js';
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const DEFAULT_DIFF_RANGE = '8w';
 
 let allTagNames: string[] = [];
 let selectedTags: string[] = [];
@@ -148,7 +149,6 @@ function maybeApplyMonthlyRecurrenceCountDefault(mode: RecurrenceUIMode): void {
   const trimmed = (rc.value || '').trim();
   if (trimmed === '' || trimmed === '1') {
     rc.value = '0';
-    requestPreview();
   }
 }
 
@@ -191,7 +191,6 @@ function setSelectedTags(tags: string[], options?: { silent?: boolean }): void {
   const hidden = document.getElementById('tags') as HTMLInputElement | null;
   if (hidden) hidden.value = selectedTags.join(', ');
   renderTagChips();
-  if (!options?.silent) requestPreview();
 }
 
 function getSelectedTags(): string[] {
@@ -521,20 +520,6 @@ function diffOccurrences(current: OccurrenceView[], target: string[], excludeDon
   return { add, del, same };
 }
 
-function renderPreview(add: string[], del: OccurrenceView[], same: OccurrenceView[]) {
-  const listAdd = el<HTMLDivElement>('listAdd'); const listDel = el<HTMLDivElement>('listDel'); const listSame = el<HTMLDivElement>('listSame');
-  listAdd.innerHTML = ''; listDel.innerHTML = ''; listSame.innerHTML = '';
-  const row = (s: string, meta?: string) => {
-    const d = document.createElement('div'); d.className = 'occ';
-    const a = document.createElement('div'); a.textContent = s; d.appendChild(a);
-    if (meta) { const m = document.createElement('div'); m.className = 'meta'; m.textContent = meta; d.appendChild(m); }
-    return d;
-  };
-  add.sort().forEach(s => listAdd.appendChild(row(s)));
-  del.sort((a,b)=>a.date.localeCompare(b.date)).forEach(o => listDel.appendChild(row(o.date, o.status)));
-  same.sort((a,b)=>a.date.localeCompare(b.date)).forEach(o => listSame.appendChild(row(o.date, o.status)));
-}
-
 let currentTask: TaskRow | null = null;
 
 function setRowVisibleById(id: string, show: boolean): void {
@@ -624,7 +609,6 @@ async function loadInitial(): Promise<void> {
     // new mode
     populateForm({ TITLE: '', IS_RECURRING: 0 } as any);
   }
-  await refreshPreview();
   // 初期表示の可視性を同期
   updateRecurrenceVisibility(el<HTMLSelectElement>('isRecurring').value as RecurrenceUIMode);
   await refreshLogs();
@@ -669,23 +653,9 @@ async function fetchOccurrencesInRange(taskId: number, range: string): Promise<O
   return (occ as any[]).filter(o => Number(o.TASK_ID) === taskId).map(o => ({ date: o.SCHEDULED_DATE as string, time: o.SCHEDULED_TIME as string, status: o.OCC_STATUS as string }));
 }
 
-async function refreshPreview(): Promise<void> {
-  const range = (el<HTMLSelectElement>('previewRange').value || '8w');
-  const excludeDone = (el<HTMLInputElement>('excludeDoneDeletes').checked);
-  const taskIdStr = el<HTMLInputElement>('taskId').value;
-  const startDate = el<HTMLInputElement>('startDate').value || null;
-  const rec = buildRecurrenceFromUI();
-  const isNew = !taskIdStr;
-  const current: OccurrenceView[] = isNew ? [] : await fetchOccurrencesInRange(Number(taskIdStr), range);
-  const target = computeTargetDates(rec, startDate, { range, isNew });
-  const diff = diffOccurrences(current, target, excludeDone);
-  renderPreview(diff.add, diff.del, diff.same);
-}
-
-let debounceTimer: any = null;
-function requestPreview() {
-  if (debounceTimer) clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(refreshPreview, 250);
+function getDiffRange(): string {
+  const select = document.getElementById('previewRange') as HTMLSelectElement | null;
+  return select?.value || DEFAULT_DIFF_RANGE;
 }
 
 async function onSave() {
@@ -705,7 +675,7 @@ async function onSave() {
   if (requireCommentEl) (payload as any).requireCompleteComment = requireCommentEl.checked ? 1 : 0;
   if (!payload.recurrence) payload.isRecurring = false;
   // 確認: 削除予定にdoneが含まれる場合は警告
-  const range = (el<HTMLSelectElement>('previewRange').value || '8w');
+  const range = getDiffRange();
   const current: OccurrenceView[] = (el<HTMLInputElement>('taskId').value) ? await fetchOccurrencesInRange(Number(el<HTMLInputElement>('taskId').value), range) : [];
   const target = computeTargetDates(payload.recurrence, startDate, { range, isNew: !el<HTMLInputElement>('taskId').value });
   const diff = diffOccurrences(current, target, false);
@@ -721,7 +691,6 @@ async function onSave() {
     const res = await window.electronAPI.createTask(payload);
     if (res.success && res.id) el<HTMLInputElement>('taskId').value = String(res.id);
   }
-  await refreshPreview();
   await refreshLogs();
 }
 
@@ -732,7 +701,6 @@ async function onDelete() {
   await window.electronAPI.deleteTask(Number(idStr));
   // クリア
   populateForm({ TITLE: '', IS_RECURRING: 0 } as any);
-  await refreshPreview();
 }
 
 function onDuplicate(): void {
@@ -750,11 +718,6 @@ function onDuplicate(): void {
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
-  // 変更時プレビュー
-  ['title','description','tags','dueAt','isRecurring','startDate','startTime','intervalDays','dailyHorizonDays','monthlyDay','monthlyNth','monthlyNthDow','yearlyMonth','yearlyDay','recurrenceCount','previewRange','excludeDoneDeletes']
-    .forEach(id => el<HTMLElement>(id)?.addEventListener('change', requestPreview));
-  // weekly checkboxes
-  Array.from(el<HTMLDivElement>('weeklyDows').querySelectorAll('input[type="checkbox"]')).forEach(b => b.addEventListener('change', requestPreview));
   el<HTMLInputElement>('recurrenceCount').addEventListener('input', () => {
     recurrenceCountTouched = true;
   });
@@ -764,7 +727,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   el<HTMLButtonElement>('duplicateBtn').addEventListener('click', onDuplicate);
   el<HTMLButtonElement>('deleteBtn').addEventListener('click', onDelete);
 
-  // Recurrence mode change -> visibility + preview already requested by change listener
+  // Recurrence mode change -> visibility sync
   el<HTMLSelectElement>('isRecurring').addEventListener('change', () => {
     const mode = el<HTMLSelectElement>('isRecurring').value as RecurrenceUIMode;
     updateRecurrenceVisibility(mode);

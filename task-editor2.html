@@ -7,19 +7,14 @@
     <style>
       body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
       header { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid #ddd; }
-      main { display: grid; grid-template-columns: 420px 1fr; height: calc(100vh - 52px); }
-      #left { border-right: 1px solid #eee; padding: 16px; overflow: auto; }
-      #right { padding: 16px; overflow: auto; }
+      main { height: calc(100vh - 52px); overflow: auto; padding: 16px; display: flex; justify-content: center; }
+      #left { width: 100%; max-width: 640px; }
       .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
       label { width: 120px; color: #333; }
       input[type=text], input[type=date], input[type=time], input[type=number], select, textarea { flex: 1; padding: 6px 8px; }
       textarea { min-height: 80px; }
       .actions { display: flex; gap: 8px; }
       h3 { margin-top: 20px; }
-      .pill { display:inline-block; padding:2px 8px; border-radius:12px; font-size:12px; }
-      .add { background:#e8f7ea; color:#0a7a1b; }
-      .del { background:#fde8e8; color:#b41111; }
-      .same { background:#f1f1f1; color:#555; }
       .list { display:flex; flex-direction:column; gap:6px; }
       .occ { display:flex; gap:8px; align-items:center; border-bottom:1px solid #f3f3f3; padding:6px 0; }
       .meta { color:#666; font-size:12px; }
@@ -37,12 +32,6 @@
     <header>
       <div>タスク編集（新）</div>
       <div class="actions">
-        <select id="previewRange">
-          <option value="8w">8週間</option>
-          <option value="6m">6ヶ月</option>
-          <option value="12m">12ヶ月</option>
-          <option value="2y">2年</option>
-        </select>
         <button id="saveBtn">保存</button>
         <button id="duplicateBtn">この設定で新規作成</button>
         <button id="deleteBtn">削除</button>
@@ -133,20 +122,6 @@
           <div class="row" id="rowYearlyDay"><label for="yearlyDay">毎年の日</label><input id="yearlyDay" type="number" min="1" max="31" placeholder="1..31" /></div>
           <div class="row"><label for="recurrenceCount">繰り返し回数</label><input id="recurrenceCount" type="number" min="0" placeholder="0=無限, 1.." /></div>
         </form>
-      </section>
-      <section id="right">
-        <div class="row" style="justify-content: space-between;">
-          <div class="meta">プレビュー（保存時の差分を表示）</div>
-          <label class="meta"><input type="checkbox" id="excludeDoneDeletes" /> 完了済みは削除しない</label>
-        </div>
-        <div id="preview">
-          <h3><span class="pill add">追加予定</span></h3>
-          <div id="listAdd" class="list"></div>
-          <h3><span class="pill del">削除予定</span></h3>
-          <div id="listDel" class="list"></div>
-          <h3><span class="pill same">変更なし</span></h3>
-          <div id="listSame" class="list"></div>
-        </div>
         <div id="logs" style="margin-top:16px; display:none;">
           <h3>最近のログ</h3>
           <div id="logsList" class="list"></div>
