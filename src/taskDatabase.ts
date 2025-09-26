@@ -794,8 +794,9 @@ export class TaskDatabase {
     return rows;
   }
 
-  async completeOccurrence(occurrenceId: number, options: { comment?: string } = {}): Promise<void> {
+  async completeOccurrence(occurrenceId: number, options: { comment?: string; completedAt?: string } = {}): Promise<void> {
     const now = this.nowIso();
+    const completedAtIso = this.normalizeCompletedAtInput(options?.completedAt) ?? now;
     const occ = await this.get<any>(
       `SELECT O.ID, O.TASK_ID, O.SCHEDULED_DATE, T.START_DATE, T.START_TIME,
               R.FREQ, R.MONTHLY_DAY, R.MONTHLY_NTH, R.MONTHLY_NTH_DOW, R.COUNT, R.YEARLY_MONTH,
@@ -808,10 +809,10 @@ export class TaskDatabase {
     );
     if (!occ) return;
     const prevStatus = 'pending';
-    await this.run(`UPDATE TASK_OCCURRENCES SET STATUS = 'done', COMPLETED_AT = ?, UPDATED_AT = ? WHERE ID = ?`, [now, now, occurrenceId]);
+    await this.run(`UPDATE TASK_OCCURRENCES SET STATUS = 'done', COMPLETED_AT = ?, UPDATED_AT = ? WHERE ID = ?`, [completedAtIso, now, occurrenceId]);
     // Log: occ.complete (user)
     try {
-      const details: any = { from: prevStatus, to: 'done', completedAt: now };
+      const details: any = { from: prevStatus, to: 'done', completedAt: completedAtIso };
       if (options && typeof options.comment !== 'undefined') details.comment = options.comment;
       await this.logEvent('occ.complete', 'user', Number(occ.TASK_ID), occurrenceId, details);
     } catch {}
@@ -877,8 +878,9 @@ export class TaskDatabase {
     } else if (occ.FREQ === 'daily' && (!occ.COUNT || Number(occ.COUNT) === 0)) {
       const interval = Math.max(1, Number((occ as any).INTERVAL || 1));
       let nextDate: string;
-      if ((occ as any).INTERVAL_ANCHOR === 'completed') {
-        const cd = new Date(now);
+      const anchor = String((occ as any).INTERVAL_ANCHOR || 'scheduled');
+      if (anchor === 'completed') {
+        const cd = new Date(completedAtIso);
         const base = new Date(cd.getFullYear(), cd.getMonth(), cd.getDate());
         base.setDate(base.getDate() + interval);
         nextDate = `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, '0')}-${String(base.getDate()).padStart(2, '0')}`;
@@ -927,6 +929,15 @@ export class TaskDatabase {
       if (!this.db) return reject(new Error('Database not initialized'));
       this.db.get(sql, params, (err, row) => err ? reject(err) : resolve(row as T));
     });
+  }
+
+  private normalizeCompletedAtInput(value?: string | null): string | null {
+    if (typeof value === 'undefined' || value === null) return null;
+    const trimmed = String(value).trim();
+    if (!trimmed) return null;
+    const parsed = new Date(trimmed);
+    if (isNaN(parsed.getTime())) return null;
+    return parsed.toISOString();
   }
 
   private all<T>(sql: string, params: any[] = []): Promise<T[]> {

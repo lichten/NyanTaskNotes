@@ -27,6 +27,15 @@ let deferDialogDescription: HTMLDivElement | null = null;
 let currentDeferOccurrence: any | null = null;
 let deferDialogSubmitting = false;
 
+let completeDialog: HTMLDialogElement | null = null;
+let completeDateInput: HTMLInputElement | null = null;
+let completeDialogSubmitButton: HTMLButtonElement | null = null;
+let completeDialogCancelButton: HTMLButtonElement | null = null;
+let completeDialogDescription: HTMLDivElement | null = null;
+let currentCompleteOccurrence: any | null = null;
+let currentCompleteDueDate: string | null = null;
+let completeDialogSubmitting = false;
+
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function formatDateInput(dateStr?: string | null): string {
@@ -54,6 +63,13 @@ function formatDateWithWeekday(dateStr?: string | null): string {
   const weekdays = ['日', '月', '火', '水', '木', '金', '土'];
   const w = weekdays[d.getDay()];
   return `${base} (${w})`;
+}
+
+function parseDateOnly(value: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [yy, mm, dd] = value.split('-').map(Number);
+  const d = new Date(yy, mm - 1, dd);
+  return isNaN(d.getTime()) ? null : d;
 }
 
 function getEffectiveDate(row: any): string {
@@ -101,6 +117,18 @@ function setDeferDialogBusy(busy: boolean): void {
   if (deferDateInput) deferDateInput.disabled = busy;
   if (deferApplyButton) deferApplyButton.disabled = busy;
   if (deferClearButton) deferClearButton.disabled = busy;
+}
+
+function setCompleteDialogBusy(busy: boolean): void {
+  if (completeDateInput) completeDateInput.disabled = busy;
+  if (completeDialogSubmitButton) completeDialogSubmitButton.disabled = busy;
+  if (completeDialogCancelButton) completeDialogCancelButton.disabled = busy;
+}
+
+function toIsoAtLocalDate(dateStr: string): string {
+  const parsed = parseDateOnly(dateStr);
+  if (!parsed) return new Date().toISOString();
+  return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()).toISOString();
 }
 
 async function confirmAndSubmitDefer(newDate: string | null): Promise<void> {
@@ -235,6 +263,189 @@ function openDeferDialog(occurrence: any): void {
     window.requestAnimationFrame(() => {
       deferDateInput?.focus();
     });
+  }
+}
+
+function ensureCompleteDialog(): void {
+  if (completeDialog) return;
+  const dialog = document.createElement('dialog');
+  dialog.className = 'defer-dialog';
+
+  const form = document.createElement('form');
+  form.method = 'dialog';
+  form.className = 'defer-dialog-form';
+
+  const title = document.createElement('div');
+  title.className = 'defer-dialog-title';
+  title.textContent = '完了日を指定';
+  form.appendChild(title);
+
+  const description = document.createElement('div');
+  description.className = 'defer-dialog-description';
+  description.textContent = '完了日を選択してください。';
+  form.appendChild(description);
+  completeDialogDescription = description;
+
+  const fieldWrapper = document.createElement('div');
+  fieldWrapper.className = 'defer-dialog-field';
+  const label = document.createElement('label');
+  label.htmlFor = 'completeDateInput';
+  label.textContent = '完了日';
+  fieldWrapper.appendChild(label);
+  const input = document.createElement('input');
+  input.type = 'date';
+  input.id = 'completeDateInput';
+  input.name = 'completeDate';
+  fieldWrapper.appendChild(input);
+  form.appendChild(fieldWrapper);
+
+  const note = document.createElement('div');
+  note.className = 'defer-dialog-note';
+  note.textContent = '完了日は期日から本日までの範囲で指定できます。';
+  form.appendChild(note);
+
+  const buttons = document.createElement('div');
+  buttons.className = 'defer-dialog-buttons';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.textContent = 'キャンセル';
+  cancelBtn.addEventListener('click', () => {
+    dialog.close();
+  });
+  buttons.appendChild(cancelBtn);
+  completeDialogCancelButton = cancelBtn;
+
+  const applyBtn = document.createElement('button');
+  applyBtn.type = 'submit';
+  applyBtn.textContent = '完了';
+  buttons.appendChild(applyBtn);
+  completeDialogSubmitButton = applyBtn;
+
+  form.appendChild(buttons);
+
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    void confirmAndSubmitCompleteWithDate();
+  });
+
+  dialog.addEventListener('close', () => {
+    currentCompleteOccurrence = null;
+    currentCompleteDueDate = null;
+    completeDialogSubmitting = false;
+    setCompleteDialogBusy(false);
+    if (completeDateInput) {
+      completeDateInput.value = '';
+      completeDateInput.removeAttribute('min');
+      completeDateInput.removeAttribute('max');
+    }
+  });
+
+  dialog.appendChild(form);
+  document.body.appendChild(dialog);
+
+  completeDialog = dialog;
+  completeDateInput = input;
+}
+
+function openCompleteWithDateDialog(occurrence: any): void {
+  if (!occurrence || !occurrence.OCCURRENCE_ID) return;
+  ensureCompleteDialog();
+  currentCompleteOccurrence = occurrence;
+  completeDialogSubmitting = false;
+  setCompleteDialogBusy(false);
+  const dueBase = formatDateInput((occurrence as any).__overdueDueDate)
+    || formatDateInput(occurrence.SCHEDULED_DATE)
+    || formatDateInput(getEffectiveDate(occurrence));
+  currentCompleteDueDate = dueBase || null;
+  const today = new Date();
+  const todayStr = ymd(today);
+  if (completeDateInput) {
+    completeDateInput.value = todayStr;
+    if (dueBase) completeDateInput.min = dueBase;
+    else completeDateInput.removeAttribute('min');
+    completeDateInput.max = todayStr;
+    completeDateInput.disabled = false;
+  }
+  if (completeDialogDescription) {
+    if (dueBase) {
+      completeDialogDescription.textContent = `完了日を選択してください。（期日: ${formatDateWithWeekday(dueBase)}／本日: ${formatDateWithWeekday(todayStr)}）`;
+    } else {
+      completeDialogDescription.textContent = `完了日を選択してください。（本日: ${formatDateWithWeekday(todayStr)}）`;
+    }
+  }
+  if (completeDialog && !completeDialog.open) {
+    completeDialog.returnValue = '';
+    completeDialog.showModal();
+    window.requestAnimationFrame(() => {
+      completeDateInput?.focus();
+    });
+  }
+}
+
+async function confirmAndSubmitCompleteWithDate(): Promise<void> {
+  if (!currentCompleteOccurrence || !currentCompleteOccurrence.OCCURRENCE_ID) return;
+  if (completeDialogSubmitting) return;
+  if (!completeDateInput) return;
+  const raw = completeDateInput.value.trim();
+  if (!raw) {
+    window.alert('完了日を入力してください。');
+    return;
+  }
+  const normalized = formatDateInput(raw);
+  if (!normalized) {
+    window.alert('完了日は YYYY-MM-DD 形式で入力してください。');
+    return;
+  }
+  const selectedDate = parseDateOnly(normalized);
+  if (!selectedDate) {
+    window.alert('完了日が正しくありません。');
+    return;
+  }
+  if (currentCompleteDueDate) {
+    const dueDate = parseDateOnly(currentCompleteDueDate);
+    if (dueDate && selectedDate < dueDate) {
+      window.alert('完了日は期日以降の日付を指定してください。');
+      return;
+    }
+  }
+  const today = new Date();
+  const todayOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  if (selectedDate > todayOnly) {
+    window.alert('完了日に未来の日付は指定できません。');
+    return;
+  }
+
+  let comment: string | undefined;
+  if (currentCompleteOccurrence.REQUIRE_COMPLETE_COMMENT) {
+    const input = await window.electronAPI.promptText({
+      title: '完了コメント',
+      label: 'コメントを入力',
+      placeholder: '',
+      ok: 'OK',
+      cancel: 'キャンセル'
+    });
+    if (input === null) return;
+    comment = String(input);
+  }
+
+  const completedAt = toIsoAtLocalDate(normalized);
+  completeDialogSubmitting = true;
+  setCompleteDialogBusy(true);
+  try {
+    const options: any = { completedAt };
+    if (typeof comment !== 'undefined') options.comment = comment;
+    await window.electronAPI.completeOccurrence(currentCompleteOccurrence.OCCURRENCE_ID, options);
+    if (completeDialog && completeDialog.open) completeDialog.close();
+    currentCompleteOccurrence = null;
+    currentCompleteDueDate = null;
+    await loadTasks();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    window.alert(`完了処理に失敗しました: ${message}`);
+  } finally {
+    completeDialogSubmitting = false;
+    setCompleteDialogBusy(false);
   }
 }
 
@@ -542,6 +753,16 @@ async function loadTasks(): Promise<void> {
             await loadTasks();
           };
           actions.appendChild(btn);
+
+          if (overdueDays > 0) {
+            const completeWithDateBtn = document.createElement('button');
+            completeWithDateBtn.textContent = '日付を指定して完了にする';
+            completeWithDateBtn.style.marginLeft = '8px';
+            completeWithDateBtn.onclick = () => {
+              openCompleteWithDateDialog(o);
+            };
+            actions.appendChild(completeWithDateBtn);
+          }
 
           const deferBtn = document.createElement('button');
           deferBtn.textContent = '延期する';
