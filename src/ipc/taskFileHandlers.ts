@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import log from 'electron-log';
+import type Store from 'electron-store';
 import type { TaskDatabase } from '../taskDatabase';
 import type { FileDatabase } from '../fileDatabase';
 
@@ -10,6 +11,7 @@ interface TaskFileHandlerOptions {
   taskDb: () => TaskDatabase | null;
   fileDb: () => FileDatabase | null;
   getMainWindow: () => BrowserWindow | null;
+  store: Store<any>;
 }
 
 type TaskFileEntry = {
@@ -37,9 +39,19 @@ async function calculateFileSha256(filePath: string): Promise<string> {
 }
 
 export function registerTaskFileHandlers(opts: TaskFileHandlerOptions): void {
-  const { getMainWindow } = opts;
+  const { getMainWindow, store } = opts;
   const getTaskDb = opts.taskDb;
   const getFileDb = opts.fileDb;
+  const getAutoTagName = (): string => {
+    try {
+      const raw = store.get('taskFileAutoTagName');
+      const value = typeof raw === 'string' ? raw.trim() : '';
+      return value || 'タスク';
+    } catch (error) {
+      log.warn('Failed to read taskFileAutoTagName from store', error);
+      return 'タスク';
+    }
+  };
 
   ipcMain.handle('task-files:list', async (_event, taskId: number) => {
     const taskDb = getTaskDb();
@@ -129,12 +141,20 @@ export function registerTaskFileHandlers(opts: TaskFileHandlerOptions): void {
       return { success: false, message: 'canceled', entries: [] as TaskFileEntry[] };
     }
     const entries: TaskFileEntry[] = [];
+    const autoTagName = getAutoTagName();
     for (const filePath of result.filePaths) {
       try {
         const sha = normalizeSha(await calculateFileSha256(filePath));
         const folderPath = path.dirname(filePath);
         const fileName = path.basename(filePath);
         const info = await fileDb.upsertFileInfoBySha256(folderPath, fileName, sha);
+        if (autoTagName) {
+          try {
+            if (info.ID) await fileDb.addTagsToFileByNames(info.ID, [autoTagName]);
+          } catch (tagError) {
+            log.error('task-files:add-from-dialog failed to add auto tag', tagError);
+          }
+        }
         entries.push({
           sha256: normalizeSha(info.SHA_256 || sha),
           fileName: info.FILE_NAME,

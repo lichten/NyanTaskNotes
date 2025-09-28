@@ -14,7 +14,8 @@ const store = new Store({
   defaults: {
     windowState: { isMaximized: false, width: 900, height: 640, x: undefined as any, y: undefined as any },
     fileDbPath: '',
-    taskDbPath: ''
+    taskDbPath: '',
+    taskFileAutoTagName: 'タスク'
   }
 });
 

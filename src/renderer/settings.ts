@@ -25,6 +25,10 @@
     const s = await window.electronAPI.getSettings();
     byId<HTMLInputElement>('filedb').value = s.fileDbPath || '';
     byId<HTMLInputElement>('taskdb').value = s.taskDbPath || '';
+    const autoTag = typeof s.taskFileAutoTagName === 'string' && s.taskFileAutoTagName.trim()
+      ? s.taskFileAutoTagName.trim()
+      : 'タスク';
+    byId<HTMLInputElement>('filedbAutoTag').value = autoTag;
   }
 
   async function onBrowseDb() {
@@ -51,7 +55,8 @@
 
   async function onSaveDb() {
     const path = byId<HTMLInputElement>('filedb').value.trim();
-    const { success } = await window.electronAPI.saveSettings({ fileDbPath: path });
+    const autoTag = byId<HTMLInputElement>('filedbAutoTag').value.trim() || 'タスク';
+    const { success } = await window.electronAPI.saveSettings({ fileDbPath: path, taskFileAutoTagName: autoTag });
     const status = byId<HTMLDivElement>('status');
     status.textContent = success ? '保存しました。アプリを再起動するとDBが初期化されます。' : '保存に失敗しました';
   }
