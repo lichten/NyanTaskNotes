@@ -10,6 +10,19 @@ let initialRecurrenceMode: RecurrenceUIMode = 'once';
 
 type OccurrenceView = { date: string; time?: string | null; status?: string; };
 
+type TaskFileEntry = {
+  sha256: string;
+  fileName?: string;
+  folderPath?: string;
+  filePath?: string;
+  exists: boolean;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+let fileDbConfigured = false;
+let attachedFiles: TaskFileEntry[] = [];
+
 function clampMonthlyDate(year: number, monthIndex0: number, day: number): string {
   const last = new Date(year, monthIndex0 + 1, 0).getDate();
   const d = Math.min(Math.max(day, 1), last);
@@ -123,6 +136,157 @@ function normalizeTagName(name: string | null | undefined): string {
   return (name ?? '').trim();
 }
 
+function normalizeSha(value: string | null | undefined): string {
+  return (value ?? '').trim().toUpperCase();
+}
+
+function normalizeTaskFileEntry(entry: Partial<TaskFileEntry> | null | undefined): TaskFileEntry | null {
+  if (!entry) return null;
+  const sha = normalizeSha(entry.sha256);
+  if (!sha) return null;
+  return {
+    sha256: sha,
+    fileName: entry.fileName ?? undefined,
+    folderPath: entry.folderPath ?? undefined,
+    filePath: entry.filePath ?? undefined,
+    exists: entry.exists ?? false,
+    createdAt: entry.createdAt ?? null,
+    updatedAt: entry.updatedAt ?? null
+  };
+}
+
+function replaceAttachedFiles(entries: Array<Partial<TaskFileEntry>>): void {
+  const normalized: TaskFileEntry[] = [];
+  const seen = new Set<string>();
+  for (const entry of entries || []) {
+    const normalizedEntry = normalizeTaskFileEntry(entry);
+    if (!normalizedEntry) continue;
+    if (seen.has(normalizedEntry.sha256)) continue;
+    seen.add(normalizedEntry.sha256);
+    normalized.push(normalizedEntry);
+  }
+  attachedFiles = normalized;
+  renderAttachedFileList();
+}
+
+function addAttachedFiles(entries: Array<Partial<TaskFileEntry>>): void {
+  let changed = false;
+  for (const entry of entries || []) {
+    const normalizedEntry = normalizeTaskFileEntry(entry);
+    if (!normalizedEntry) continue;
+    const idx = attachedFiles.findIndex(f => f.sha256 === normalizedEntry.sha256);
+    if (idx >= 0) {
+      attachedFiles[idx] = { ...attachedFiles[idx], ...normalizedEntry };
+    } else {
+      attachedFiles.push(normalizedEntry);
+    }
+    changed = true;
+  }
+  if (changed) renderAttachedFileList();
+}
+
+function removeAttachedFile(sha: string): void {
+  const normalizedSha = normalizeSha(sha);
+  const next = attachedFiles.filter(entry => entry.sha256 !== normalizedSha);
+  if (next.length !== attachedFiles.length) {
+    attachedFiles = next;
+    renderAttachedFileList();
+  }
+}
+
+function getAttachedFileShas(): string[] {
+  return attachedFiles.map(entry => entry.sha256);
+}
+
+function renderAttachedFileList(): void {
+  const list = document.getElementById('fileList') as HTMLDivElement | null;
+  const notice = document.getElementById('fileDbNotice') as HTMLDivElement | null;
+  const addBtn = document.getElementById('fileAddBtn') as HTMLButtonElement | null;
+  if (addBtn) addBtn.disabled = !fileDbConfigured;
+  if (!list) return;
+  list.innerHTML = '';
+  if (!attachedFiles.length) {
+    const empty = document.createElement('div');
+    empty.className = 'file-empty';
+    empty.textContent = fileDbConfigured ? '関連ファイルはまだありません。' : 'ファイルDBが未設定のため、関連ファイルを追加できません。';
+    list.appendChild(empty);
+  } else {
+    attachedFiles.forEach(entry => {
+      const item = document.createElement('div');
+      item.className = 'file-item';
+      if (!entry.exists) item.classList.add('missing');
+
+      const info = document.createElement('div');
+      info.className = 'file-item-info';
+
+      const name = document.createElement('div');
+      name.className = 'file-item-name';
+      name.textContent = entry.fileName || '(ファイル情報なし)';
+      info.appendChild(name);
+
+      if (entry.filePath || entry.folderPath || entry.fileName) {
+        const pathLine = document.createElement('div');
+        pathLine.className = 'file-item-path';
+        pathLine.textContent = entry.filePath || [entry.folderPath, entry.fileName].filter(Boolean).join(entry.folderPath?.includes('\\') ? '\\' : '/');
+        info.appendChild(pathLine);
+      }
+
+      const hash = document.createElement('div');
+      hash.className = 'file-item-hash';
+      hash.textContent = entry.sha256;
+      info.appendChild(hash);
+
+      const actions = document.createElement('div');
+      actions.className = 'file-actions';
+
+      const openBtn = document.createElement('button');
+      openBtn.type = 'button';
+      openBtn.textContent = '開く';
+      if (!entry.exists) openBtn.disabled = true;
+      openBtn.addEventListener('click', async () => {
+        try {
+          const result = await window.electronAPI.showFileBySha256(entry.sha256);
+          if (!result?.success && result?.message && result.message !== 'file_not_exists') {
+            alert('ファイルを開けませんでした: ' + result.message);
+          } else if (result?.message === 'file_not_exists') {
+            alert('ファイルが見つかりませんでした。');
+          }
+        } catch (err) {
+          console.error('Failed to open file', err);
+          alert('ファイルを開く際にエラーが発生しました。');
+        }
+      });
+      actions.appendChild(openBtn);
+
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.textContent = '削除';
+      removeBtn.addEventListener('click', () => removeAttachedFile(entry.sha256));
+      actions.appendChild(removeBtn);
+
+      item.appendChild(info);
+      item.appendChild(actions);
+      list.appendChild(item);
+    });
+  }
+
+  if (notice) {
+    if (!fileDbConfigured) {
+      notice.textContent = 'ファイルDBが未設定です。設定画面でSQLiteファイルを指定してください。';
+      notice.classList.add('warning');
+      notice.style.display = '';
+    } else if (attachedFiles.some(entry => !entry.exists)) {
+      notice.textContent = '一部のファイルが見つかりません。パスやファイルの存在を確認してください。';
+      notice.classList.remove('warning');
+      notice.style.display = '';
+    } else {
+      notice.textContent = '';
+      notice.style.display = 'none';
+      notice.classList.remove('warning');
+    }
+  }
+}
+
 function mergeTagNames(candidates: string[]): void {
   const set = new Set<string>();
   allTagNames.forEach(tag => {
@@ -182,6 +346,61 @@ function renderTagChips(): void {
     chip.addEventListener('click', () => toggleTagSelection(name));
     wrap.appendChild(chip);
   });
+}
+
+async function initializeFileControls(): Promise<void> {
+  try {
+    const settings = await window.electronAPI.getSettings();
+    fileDbConfigured = Boolean(settings?.fileDbPath);
+  } catch {
+    fileDbConfigured = false;
+  }
+  renderAttachedFileList();
+  const addBtn = document.getElementById('fileAddBtn') as HTMLButtonElement | null;
+  addBtn?.addEventListener('click', onAddFilesClicked);
+}
+
+async function onAddFilesClicked(): Promise<void> {
+  if (!fileDbConfigured) {
+    alert('ファイルDBが未設定です。設定画面でSQLiteファイルを指定してください。');
+    return;
+  }
+  try {
+    const result = await window.electronAPI.pickTaskFiles({ allowMultiple: true });
+    if (!result?.success) {
+      if (result?.message === 'file_db_not_initialized') {
+        fileDbConfigured = false;
+        renderAttachedFileList();
+        alert('ファイルDBが未設定です。設定画面でSQLiteファイルを指定してください。');
+      } else if (result?.message && result.message !== 'canceled') {
+        alert('ファイルの追加に失敗しました: ' + result.message);
+      }
+      return;
+    }
+    if (Array.isArray(result.entries)) addAttachedFiles(result.entries);
+  } catch (err) {
+    console.error('Failed to pick task files', err);
+    alert('ファイルの追加中にエラーが発生しました。');
+  }
+}
+
+async function refreshAttachedFilesFromDb(taskId: number | null | undefined): Promise<void> {
+  if (!Number.isFinite(taskId) || !taskId) return;
+  try {
+    const result = await window.electronAPI.listTaskFiles(Number(taskId));
+    if (result?.success && Array.isArray(result.entries)) {
+      replaceAttachedFiles(result.entries);
+    } else {
+      replaceAttachedFiles([]);
+    }
+  } catch (err) {
+    console.error('Failed to load task file links', err);
+    replaceAttachedFiles([]);
+  }
+}
+
+function applyFileSnapshot(entries?: Array<Partial<TaskFileEntry>>): void {
+  replaceAttachedFiles(entries ?? []);
 }
 
 function setSelectedTags(tags: string[], options?: { silent?: boolean }): void {
@@ -340,6 +559,8 @@ function captureFormSnapshot(): TaskRow {
     snapshot.YEARLY_MONTH = null;
     snapshot.WEEKLY_DOWS = null;
   }
+
+  (snapshot as any).FILE_ENTRIES = attachedFiles.map(entry => ({ ...entry }));
 
   return snapshot as TaskRow;
 }
@@ -586,28 +807,42 @@ async function loadInitial(): Promise<void> {
       const normalizedStart = formatDateInput(copyData.START_DATE);
       if (normalizedStart) {
         const now = new Date();
-        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
         copyData.START_DATE = normalizedStart < todayStr ? todayStr : normalizedStart;
       } else {
         copyData.START_DATE = null;
       }
       currentTask = null;
       populateForm(copyData);
+      applyFileSnapshot(((copyData as any).FILE_ENTRIES as Array<Partial<TaskFileEntry>>) ?? []);
     } else if (idStr) {
       const id = Number(idStr);
       currentTask = await window.electronAPI.getTask(id);
-      if (currentTask) populateForm(currentTask);
-      else populateForm({ TITLE: '', IS_RECURRING: 0 } as any);
+      if (currentTask) {
+        populateForm(currentTask);
+        await refreshAttachedFilesFromDb(currentTask.ID);
+      } else {
+        populateForm({ TITLE: '', IS_RECURRING: 0 } as any);
+        replaceAttachedFiles([]);
+      }
     } else {
       populateForm({ TITLE: '', IS_RECURRING: 0 } as any);
+      replaceAttachedFiles([]);
     }
   } else if (idStr) {
     const id = Number(idStr);
     currentTask = await window.electronAPI.getTask(id);
-    if (currentTask) populateForm(currentTask);
+    if (currentTask) {
+      populateForm(currentTask);
+      await refreshAttachedFilesFromDb(currentTask.ID);
+    } else {
+      populateForm({ TITLE: '', IS_RECURRING: 0 } as any);
+      replaceAttachedFiles([]);
+    }
   } else {
     // new mode
     populateForm({ TITLE: '', IS_RECURRING: 0 } as any);
+    replaceAttachedFiles([]);
   }
   // 初期表示の可視性を同期
   updateRecurrenceVisibility(el<HTMLSelectElement>('isRecurring').value as RecurrenceUIMode);
@@ -685,11 +920,29 @@ async function onSave() {
     if (!ok) return;
   }
   const idStr = el<HTMLInputElement>('taskId').value;
-  if (idStr) {
-    await window.electronAPI.updateTask(Number(idStr), payload);
+  const fileShas = getAttachedFileShas();
+  let taskId: number | null = idStr ? Number(idStr) : null;
+  if (taskId) {
+    await window.electronAPI.updateTask(taskId, payload);
   } else {
     const res = await window.electronAPI.createTask(payload);
-    if (res.success && res.id) el<HTMLInputElement>('taskId').value = String(res.id);
+    if (res.success && res.id) {
+      taskId = res.id;
+      el<HTMLInputElement>('taskId').value = String(res.id);
+    }
+  }
+  if (taskId) {
+    const result = await window.electronAPI.setTaskFiles(taskId, fileShas);
+    if (!result?.success) {
+      alert('関連ファイルの更新に失敗しました: ' + (result?.message || '不明なエラー'));
+    } else {
+      await refreshAttachedFilesFromDb(taskId);
+    }
+    try {
+      currentTask = await window.electronAPI.getTask(taskId);
+    } catch {
+      /* noop */
+    }
   }
   await refreshLogs();
 }
@@ -701,6 +954,7 @@ async function onDelete() {
   await window.electronAPI.deleteTask(Number(idStr));
   // クリア
   populateForm({ TITLE: '', IS_RECURRING: 0 } as any);
+  replaceAttachedFiles([]);
 }
 
 function onDuplicate(): void {
@@ -722,6 +976,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     recurrenceCountTouched = true;
   });
 
+  await initializeFileControls();
   await initializeTagControls();
   el<HTMLButtonElement>('saveBtn').addEventListener('click', onSave);
   el<HTMLButtonElement>('duplicateBtn').addEventListener('click', onDuplicate);

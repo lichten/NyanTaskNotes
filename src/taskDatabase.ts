@@ -91,6 +91,17 @@ export class TaskDatabase {
     if (!hasDeferred) {
       await this.run("ALTER TABLE TASK_OCCURRENCES ADD COLUMN DEFERRED_DATE TEXT");
     }
+
+    await this.run(
+      `CREATE TABLE IF NOT EXISTS TASK_FILE_LINKS (
+        TASK_ID INTEGER NOT NULL REFERENCES TASKS(ID) ON DELETE CASCADE,
+        FILE_SHA256 TEXT NOT NULL,
+        CREATED_AT TEXT,
+        UPDATED_AT TEXT,
+        PRIMARY KEY (TASK_ID, FILE_SHA256)
+      )`
+    );
+    await this.run('CREATE INDEX IF NOT EXISTS IDX_TASK_FILE_LINKS_SHA ON TASK_FILE_LINKS (FILE_SHA256)');
   }
 
   private async logEvent(kind: string, source: 'user' | 'system', taskId?: number | null, occurrenceId?: number | null, details?: any): Promise<void> {
@@ -794,8 +805,9 @@ export class TaskDatabase {
     return rows;
   }
 
-  async completeOccurrence(occurrenceId: number, options: { comment?: string } = {}): Promise<void> {
+  async completeOccurrence(occurrenceId: number, options: { comment?: string; completedAt?: string } = {}): Promise<void> {
     const now = this.nowIso();
+    const completedAtIso = this.normalizeCompletedAtInput(options?.completedAt) ?? now;
     const occ = await this.get<any>(
       `SELECT O.ID, O.TASK_ID, O.SCHEDULED_DATE, T.START_DATE, T.START_TIME,
               R.FREQ, R.MONTHLY_DAY, R.MONTHLY_NTH, R.MONTHLY_NTH_DOW, R.COUNT, R.YEARLY_MONTH,
@@ -808,10 +820,10 @@ export class TaskDatabase {
     );
     if (!occ) return;
     const prevStatus = 'pending';
-    await this.run(`UPDATE TASK_OCCURRENCES SET STATUS = 'done', COMPLETED_AT = ?, UPDATED_AT = ? WHERE ID = ?`, [now, now, occurrenceId]);
+    await this.run(`UPDATE TASK_OCCURRENCES SET STATUS = 'done', COMPLETED_AT = ?, UPDATED_AT = ? WHERE ID = ?`, [completedAtIso, now, occurrenceId]);
     // Log: occ.complete (user)
     try {
-      const details: any = { from: prevStatus, to: 'done', completedAt: now };
+      const details: any = { from: prevStatus, to: 'done', completedAt: completedAtIso };
       if (options && typeof options.comment !== 'undefined') details.comment = options.comment;
       await this.logEvent('occ.complete', 'user', Number(occ.TASK_ID), occurrenceId, details);
     } catch {}
@@ -877,8 +889,9 @@ export class TaskDatabase {
     } else if (occ.FREQ === 'daily' && (!occ.COUNT || Number(occ.COUNT) === 0)) {
       const interval = Math.max(1, Number((occ as any).INTERVAL || 1));
       let nextDate: string;
-      if ((occ as any).INTERVAL_ANCHOR === 'completed') {
-        const cd = new Date(now);
+      const anchor = String((occ as any).INTERVAL_ANCHOR || 'scheduled');
+      if (anchor === 'completed') {
+        const cd = new Date(completedAtIso);
         const base = new Date(cd.getFullYear(), cd.getMonth(), cd.getDate());
         base.setDate(base.getDate() + interval);
         nextDate = `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, '0')}-${String(base.getDate()).padStart(2, '0')}`;
@@ -929,6 +942,15 @@ export class TaskDatabase {
     });
   }
 
+  private normalizeCompletedAtInput(value?: string | null): string | null {
+    if (typeof value === 'undefined' || value === null) return null;
+    const trimmed = String(value).trim();
+    if (!trimmed) return null;
+    const parsed = new Date(trimmed);
+    if (isNaN(parsed.getTime())) return null;
+    return parsed.toISOString();
+  }
+
   private all<T>(sql: string, params: any[] = []): Promise<T[]> {
     return new Promise((resolve, reject) => {
       if (!this.db) return reject(new Error('Database not initialized'));
@@ -936,7 +958,65 @@ export class TaskDatabase {
     });
   }
 
+  private async withTransaction<T>(fn: () => Promise<T>): Promise<T> {
+    await this.run('BEGIN TRANSACTION');
+    try {
+      const result = await fn();
+      await this.run('COMMIT');
+      return result;
+    } catch (error) {
+      try { await this.run('ROLLBACK'); } catch {}
+      throw error;
+    }
+  }
+
   private nowIso(): string { return new Date().toISOString(); }
+
+  async listTaskFileLinks(taskId: number): Promise<Array<{ fileSha256: string; createdAt: string | null; updatedAt: string | null }>> {
+    if (!Number.isFinite(taskId) || taskId <= 0) return [];
+    const rows = await this.all<{ FILE_SHA256: string; CREATED_AT: string | null; UPDATED_AT: string | null }>(
+      'SELECT FILE_SHA256, CREATED_AT, UPDATED_AT FROM TASK_FILE_LINKS WHERE TASK_ID = ? ORDER BY CREATED_AT ASC',
+      [taskId]
+    );
+    return rows.map(row => ({
+      fileSha256: (row.FILE_SHA256 || '').toUpperCase(),
+      createdAt: row.CREATED_AT ?? null,
+      updatedAt: row.UPDATED_AT ?? null
+    }));
+  }
+
+  async setTaskFileLinks(taskId: number, shaList: string[]): Promise<void> {
+    if (!Number.isFinite(taskId) || taskId <= 0) throw new Error('Invalid task ID');
+    const normalized = Array.from(new Set((shaList || []).map(s => String(s || '').trim().toUpperCase()).filter(Boolean)));
+    const now = this.nowIso();
+    await this.withTransaction(async () => {
+      const existing = await this.all<{ FILE_SHA256: string }>(
+        'SELECT FILE_SHA256 FROM TASK_FILE_LINKS WHERE TASK_ID = ?',
+        [taskId]
+      );
+      const existingSet = new Set(existing.map(r => (r.FILE_SHA256 || '').toUpperCase()));
+      const desiredSet = new Set(normalized);
+
+      const toDelete: string[] = [];
+      existingSet.forEach(sha => { if (!desiredSet.has(sha)) toDelete.push(sha); });
+      if (toDelete.length) {
+        const placeholders = toDelete.map(() => '?').join(',');
+        await this.run(
+          `DELETE FROM TASK_FILE_LINKS WHERE TASK_ID = ? AND UPPER(FILE_SHA256) IN (${placeholders})`,
+          [taskId, ...toDelete]
+        );
+      }
+
+      for (const sha of normalized) {
+        await this.run(
+          `INSERT INTO TASK_FILE_LINKS (TASK_ID, FILE_SHA256, CREATED_AT, UPDATED_AT)
+           VALUES (?, UPPER(?), ?, ?)
+           ON CONFLICT(TASK_ID, FILE_SHA256) DO UPDATE SET UPDATED_AT = excluded.UPDATED_AT`,
+          [taskId, sha, now, now]
+        );
+      }
+    });
+  }
 
   async listTasks(params: { query?: string } = {}): Promise<any[]> {
     const where: string[] = [];

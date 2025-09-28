@@ -4,6 +4,7 @@ import type { FileDatabase } from '../fileDatabase';
 import type { TaskDatabase } from '../taskDatabase';
 import { registerFileDbIpcHandlers } from './fileDbHandlers';
 import { registerTaskIpcHandlers } from './taskHandlers';
+import { registerTaskFileHandlers } from './taskFileHandlers';
 
 export function registerIpcHandlers(opts: {
   fileDb: () => FileDatabase | null;
@@ -13,4 +14,5 @@ export function registerIpcHandlers(opts: {
 }): void {
   registerFileDbIpcHandlers(opts);
   registerTaskIpcHandlers(opts as any);
+  registerTaskFileHandlers(opts);
 }

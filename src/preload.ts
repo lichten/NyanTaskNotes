@@ -16,6 +16,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showFileBySha256: (sha256: string) => ipcRenderer.invoke('show-file-by-sha256', sha256),
   removeTagsFromFile: (sha256: string, tags: string[]) => ipcRenderer.invoke('remove-tags-from-file', sha256, tags)
   ,
+  // Task file links
+  listTaskFiles: (taskId: number) => ipcRenderer.invoke('task-files:list', taskId),
+  setTaskFiles: (taskId: number, shaList: string[]) => ipcRenderer.invoke('task-files:set', taskId, shaList),
+  pickTaskFiles: (options?: { allowMultiple?: boolean }) => ipcRenderer.invoke('task-files:add-from-dialog', options || {})
+  ,
   // Tasks
   listTasks: (params?: any) => ipcRenderer.invoke('tasks:list', params || {}),
   getTask: (id: number) => ipcRenderer.invoke('tasks:get', id),
@@ -25,7 +30,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ,
   // Occurrences
   listOccurrences: (params?: any) => ipcRenderer.invoke('occ:list', params || {}),
-  completeOccurrence: (id: number, options?: { comment?: string }) => ipcRenderer.invoke('occ:complete', id, options || {}),
+  completeOccurrence: (id: number, options?: { comment?: string; completedAt?: string }) => ipcRenderer.invoke('occ:complete', id, options || {}),
   deferOccurrence: (id: number, newDate?: string | null) => ipcRenderer.invoke('occ:defer', id, newDate ?? null)
   ,
   // Task tags
@@ -52,13 +57,16 @@ declare global {
       getFileInfoBySha256: (sha256: string) => Promise<any>;
       showFileBySha256: (sha256: string) => Promise<{ success: boolean; filePath?: string; message?: string }>;
       removeTagsFromFile: (sha256: string, tags: string[]) => Promise<{ success: boolean; removed?: number; message?: string }>;
+      listTaskFiles: (taskId: number) => Promise<{ success: boolean; entries: Array<{ sha256: string; fileName?: string; folderPath?: string; filePath?: string; exists: boolean; createdAt: string | null; updatedAt: string | null }>; message?: string }>;
+      setTaskFiles: (taskId: number, shaList: string[]) => Promise<{ success: boolean; message?: string }>;
+      pickTaskFiles: (options?: { allowMultiple?: boolean }) => Promise<{ success: boolean; entries: Array<{ sha256: string; fileName?: string; folderPath?: string; filePath?: string; exists: boolean; createdAt: string | null; updatedAt: string | null }>; message?: string }>;
       listTasks: (params?: any) => Promise<any[]>;
       getTask: (id: number) => Promise<any>;
       createTask: (payload: any) => Promise<{ success: boolean; id?: number }>;
       updateTask: (id: number, payload: any) => Promise<{ success: boolean }>;
       deleteTask: (id: number) => Promise<{ success: boolean }>;
       listOccurrences: (params?: any) => Promise<any[]>;
-      completeOccurrence: (id: number, options?: { comment?: string }) => Promise<{ success: boolean }>;
+      completeOccurrence: (id: number, options?: { comment?: string; completedAt?: string }) => Promise<{ success: boolean }>;
       deferOccurrence: (id: number, newDate?: string | null) => Promise<{ success: boolean }>;
       listTaskTags: () => Promise<string[]>;
       listTaskTagInfos: () => Promise<Array<{ id: number; name: string; createdAt: string | null; updatedAt: string | null }>>;
