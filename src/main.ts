@@ -40,7 +40,6 @@ function createMenu(): void {
         { label: 'タグ編集', click: () => mainWindow?.loadFile('tag-manager.html') },
         { label: 'タスク設定一覧', click: () => mainWindow?.loadFile('task-settings.html') },
         { label: 'タスク表示', click: () => mainWindow?.loadFile('task-view.html') },
-        { label: 'タスク編集', click: () => mainWindow?.loadFile('task-editor.html') },
         { label: 'タスク編集（新規/新画面）', click: () => mainWindow?.loadFile('task-editor2.html', { query: { new: '1' } }) }
       ]
     }
