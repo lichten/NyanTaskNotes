@@ -103,7 +103,7 @@ export function registerTaskIpcHandlers(opts: {
     }
   });
 
-  ipcMain.handle('occ:complete', async (_event, id: number, options?: { comment?: string; completedAt?: string }) => {
+  ipcMain.handle('occ:complete', async (_event, id: number, options?: { comment?: string; completedAt?: string; manualNextDue?: string }) => {
     const db = getTaskDb();
     if (!db) return { success: false };
     try {

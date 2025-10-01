@@ -87,6 +87,9 @@ function buildRecurrenceFromUI(): any {
   const mode = (el<HTMLSelectElement>('isRecurring').value as RecurrenceUIMode);
   const rcStr = (el<HTMLInputElement>('recurrenceCount').value || '').trim();
   let count = rcStr ? Number(rcStr) : 0; if (!isFinite(count) || count < 0) count = 0;
+  if (mode === 'manualNext') {
+    return { freq: 'manualNext', manualNextDue: true };
+  }
   if (mode === 'daily') {
     const dhStr = (el<HTMLInputElement>('dailyHorizonDays').value || '').trim();
     let horizonDays = dhStr ? Number(dhStr) : 14; if (!isFinite(horizonDays) || horizonDays <= 0) horizonDays = 14; if (horizonDays > 365) horizonDays = 365;
@@ -460,7 +463,8 @@ function captureFormSnapshot(): TaskRow {
     START_DATE: el<HTMLInputElement>('startDate').value || null,
     START_TIME: el<HTMLInputElement>('startTime').value || null,
     IS_RECURRING: mode === 'once' ? 0 : 1,
-    REQUIRE_COMPLETE_COMMENT: requireCommentEl && requireCommentEl.checked ? 1 : 0
+    REQUIRE_COMPLETE_COMMENT: requireCommentEl && requireCommentEl.checked ? 1 : 0,
+    MANUAL_NEXT_DUE: 0
   };
 
   if (!snapshot.START_DATE) snapshot.START_DATE = null;
@@ -478,6 +482,19 @@ function captureFormSnapshot(): TaskRow {
     snapshot.MONTHLY_NTH_DOW = null;
     snapshot.YEARLY_MONTH = null;
     snapshot.WEEKLY_DOWS = null;
+    snapshot.MANUAL_NEXT_DUE = 0;
+  } else if (recurrence && (recurrence as any).manualNextDue) {
+    snapshot.FREQ = 'monthly';
+    snapshot.COUNT = 0;
+    snapshot.INTERVAL = null;
+    snapshot.INTERVAL_ANCHOR = null;
+    snapshot.HORIZON_DAYS = null;
+    snapshot.MONTHLY_DAY = null;
+    snapshot.MONTHLY_NTH = null;
+    snapshot.MONTHLY_NTH_DOW = null;
+    snapshot.YEARLY_MONTH = null;
+    snapshot.WEEKLY_DOWS = null;
+    snapshot.MANUAL_NEXT_DUE = 1;
   } else if (recurrence) {
     let count = Number((recurrence as any).count || 0);
     if (!Number.isFinite(count) || count < 0) count = 0;
@@ -493,6 +510,7 @@ function captureFormSnapshot(): TaskRow {
       snapshot.MONTHLY_NTH_DOW = null;
       snapshot.YEARLY_MONTH = null;
       snapshot.WEEKLY_DOWS = null;
+      snapshot.MANUAL_NEXT_DUE = 0;
     } else if (freq === 'weekly') {
       snapshot.FREQ = 'weekly';
       snapshot.WEEKLY_DOWS = Math.max(0, Number((recurrence as any).weeklyDows || 0));
@@ -577,7 +595,9 @@ function computeTargetDates(rec: any, startDateStr: string | null, options: { ra
     res.push(ds);
   };
 
-  if (!rec || rec.freq === 'once') {
+  const isManual = !!(rec && (rec.manualNextDue || rec.freq === 'manualNext'));
+
+  if (!rec || rec.freq === 'once' || isManual) {
     if (startDateStr) addIfInRange(startDate);
     return res;
   }
@@ -756,6 +776,7 @@ function setRowVisibleByInput(inputId: string, show: boolean): void {
 
 function updateRecurrenceVisibility(mode: RecurrenceUIMode): void {
   const showOnce = mode === 'once';
+  const showManual = mode === 'manualNext';
   const showDaily = mode === 'daily';
   const showEveryNScheduled = mode === 'everyNScheduled';
   const showEveryNCompleted = mode === 'everyNCompleted';
@@ -765,9 +786,9 @@ function updateRecurrenceVisibility(mode: RecurrenceUIMode): void {
   const showYearly = mode === 'yearly';
 
   // Single occurrence vs recurring basics
-  setRowVisibleByInput('dueAt', showOnce);
-  setRowVisibleByInput('startDate', !showOnce);
-  setRowVisibleByInput('startTime', !showOnce);
+  setRowVisibleByInput('dueAt', showOnce || showManual);
+  setRowVisibleByInput('startDate', !(showOnce || showManual));
+  setRowVisibleByInput('startTime', !(showOnce || showManual));
 
   // Daily and interval related
   setRowVisibleById('rowHorizon', showDaily || showEveryNScheduled);
@@ -781,11 +802,18 @@ function updateRecurrenceVisibility(mode: RecurrenceUIMode): void {
   setRowVisibleById('rowYearlyDay', showYearly);
 
   // Recurrence count: visible for any recurring pattern except 'once'
-  setRowVisibleByInput('recurrenceCount', !showOnce);
+  setRowVisibleByInput('recurrenceCount', !(showOnce || showManual));
 
   // Required flags
   const dueAtEl = el<HTMLInputElement>('dueAt');
-  if (dueAtEl) dueAtEl.required = showOnce;
+  if (dueAtEl) dueAtEl.required = showOnce || showManual;
+
+  if (showManual) {
+    const startInput = el<HTMLInputElement>('startDate');
+    if (startInput && dueAtEl && dueAtEl.value && (!startInput.value || startInput.value < dueAtEl.value)) {
+      startInput.value = dueAtEl.value;
+    }
+  }
 }
 
 async function loadInitial(): Promise<void> {
@@ -895,14 +923,15 @@ function getDiffRange(): string {
 
 async function onSave() {
   const mode = (el<HTMLSelectElement>('isRecurring').value as RecurrenceUIMode);
-  const startDate = el<HTMLInputElement>('startDate').value || null;
+  const startDateInput = el<HTMLInputElement>('startDate').value || null;
+  const dueDateInput = el<HTMLInputElement>('dueAt').value || null;
   const payload = {
     title: el<HTMLInputElement>('title').value.trim(),
     description: el<HTMLTextAreaElement>('description').value.trim() || null,
     tags: getSelectedTags(),
-    dueAt: el<HTMLInputElement>('dueAt').value || null,
+    dueAt: dueDateInput,
     isRecurring: mode !== 'once',
-    startDate,
+    startDate: startDateInput,
     startTime: el<HTMLInputElement>('startTime').value || null,
     recurrence: buildRecurrenceFromUI()
   };
@@ -912,7 +941,8 @@ async function onSave() {
   // 確認: 削除予定にdoneが含まれる場合は警告
   const range = getDiffRange();
   const current: OccurrenceView[] = (el<HTMLInputElement>('taskId').value) ? await fetchOccurrencesInRange(Number(el<HTMLInputElement>('taskId').value), range) : [];
-  const target = computeTargetDates(payload.recurrence, startDate, { range, isNew: !el<HTMLInputElement>('taskId').value });
+  const basePreviewStart = mode === 'manualNext' ? (dueDateInput || startDateInput) : startDateInput;
+  const target = computeTargetDates(payload.recurrence, basePreviewStart, { range, isNew: !el<HTMLInputElement>('taskId').value });
   const diff = diffOccurrences(current, target, false);
   const doneDel = diff.del.filter(d => d.status === 'done').length;
   if (doneDel > 0) {
@@ -987,6 +1017,22 @@ window.addEventListener('DOMContentLoaded', async () => {
     const mode = el<HTMLSelectElement>('isRecurring').value as RecurrenceUIMode;
     updateRecurrenceVisibility(mode);
     maybeApplyMonthlyRecurrenceCountDefault(mode);
+    if (mode === 'manualNext') {
+      const rc = document.getElementById('recurrenceCount') as HTMLInputElement | null;
+      if (rc) {
+        rc.value = '0';
+        recurrenceCountTouched = false;
+      }
+    }
+  });
+
+  el<HTMLInputElement>('dueAt').addEventListener('change', () => {
+    const mode = el<HTMLSelectElement>('isRecurring').value as RecurrenceUIMode;
+    if (mode === 'manualNext') {
+      const dueVal = el<HTMLInputElement>('dueAt').value;
+      const startInput = el<HTMLInputElement>('startDate');
+      if (startInput && dueVal) startInput.value = dueVal;
+    }
   });
 
   await loadInitial();

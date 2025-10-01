@@ -18,6 +18,7 @@
     COUNT?: number | null;
     HORIZON_DAYS?: number | null;
     WEEKLY_DOWS?: number | null;
+    MANUAL_NEXT_DUE?: number | null;
     REQUIRE_COMPLETE_COMMENT?: number | null;
   };
 
@@ -76,6 +77,7 @@
 
   function getRecurrenceCategory(task: TaskRow): string {
     if (!task.IS_RECURRING) return 'once';
+    if (Number(task.MANUAL_NEXT_DUE || 0) === 1) return 'manualNext';
     const freq = (task.FREQ || '').toLowerCase();
     if (freq === 'daily') {
       const anchor = (task.INTERVAL_ANCHOR || 'scheduled').toLowerCase();
@@ -95,6 +97,9 @@
     const weekdays = ['日', '月', '火', '水', '木', '金', '土'];
     const freq = (task.FREQ || '').toLowerCase();
     if (!task.IS_RECURRING) return '単発';
+    if (Number(task.MANUAL_NEXT_DUE || 0) === 1) {
+      return '完了時に期日を指定';
+    }
     if (freq === 'daily') {
       const interval = Number(task.INTERVAL || 1);
       const anchor = (task.INTERVAL_ANCHOR || 'scheduled');
