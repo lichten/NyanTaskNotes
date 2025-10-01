@@ -11,6 +11,7 @@ type Task = {
   IS_RECURRING?: number;
   FREQ?: string | null;
   MONTHLY_DAY?: number | null;
+  MANUAL_NEXT_DUE?: number | null;
 };
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -32,6 +33,9 @@ let completeDateInput: HTMLInputElement | null = null;
 let completeDialogSubmitButton: HTMLButtonElement | null = null;
 let completeDialogCancelButton: HTMLButtonElement | null = null;
 let completeDialogDescription: HTMLDivElement | null = null;
+let completeNextDueField: HTMLDivElement | null = null;
+let completeNextDueInput: HTMLInputElement | null = null;
+let completeDialogNote: HTMLDivElement | null = null;
 let currentCompleteOccurrence: any | null = null;
 let currentCompleteDueDate: string | null = null;
 let completeDialogSubmitting = false;
@@ -123,6 +127,10 @@ function setCompleteDialogBusy(busy: boolean): void {
   if (completeDateInput) completeDateInput.disabled = busy;
   if (completeDialogSubmitButton) completeDialogSubmitButton.disabled = busy;
   if (completeDialogCancelButton) completeDialogCancelButton.disabled = busy;
+  if (completeNextDueInput) {
+    const shouldDisable = busy || (completeNextDueField != null && completeNextDueField.style.display === 'none');
+    completeNextDueInput.disabled = shouldDisable;
+  }
 }
 
 function toIsoAtLocalDate(dateStr: string): string {
@@ -299,6 +307,21 @@ function ensureCompleteDialog(): void {
   fieldWrapper.appendChild(input);
   form.appendChild(fieldWrapper);
 
+  const nextDueField = document.createElement('div');
+  nextDueField.className = 'defer-dialog-field';
+  nextDueField.style.display = 'none';
+  const nextDueLabel = document.createElement('label');
+  nextDueLabel.htmlFor = 'manualNextDueInput';
+  nextDueLabel.textContent = '次の期日';
+  nextDueField.appendChild(nextDueLabel);
+  const nextDueInput = document.createElement('input');
+  nextDueInput.type = 'date';
+  nextDueInput.id = 'manualNextDueInput';
+  nextDueInput.name = 'manualNextDue';
+  nextDueInput.disabled = true;
+  nextDueField.appendChild(nextDueInput);
+  form.appendChild(nextDueField);
+
   const note = document.createElement('div');
   note.className = 'defer-dialog-note';
   note.textContent = '完了日は期日から本日までの範囲で指定できます。';
@@ -339,6 +362,14 @@ function ensureCompleteDialog(): void {
       completeDateInput.removeAttribute('min');
       completeDateInput.removeAttribute('max');
     }
+    if (completeNextDueInput) {
+      completeNextDueInput.value = '';
+      completeNextDueInput.disabled = true;
+      completeNextDueInput.removeAttribute('min');
+      completeNextDueInput.removeAttribute('max');
+    }
+    if (completeNextDueField) completeNextDueField.style.display = 'none';
+    if (completeDialogNote) completeDialogNote.textContent = '完了日は期日から本日までの範囲で指定できます。';
   });
 
   dialog.appendChild(form);
@@ -346,6 +377,9 @@ function ensureCompleteDialog(): void {
 
   completeDialog = dialog;
   completeDateInput = input;
+  completeNextDueField = nextDueField;
+  completeNextDueInput = nextDueInput;
+  completeDialogNote = note;
 }
 
 function openCompleteWithDateDialog(occurrence: any): void {
@@ -354,6 +388,7 @@ function openCompleteWithDateDialog(occurrence: any): void {
   currentCompleteOccurrence = occurrence;
   completeDialogSubmitting = false;
   setCompleteDialogBusy(false);
+  const manualNext = Number((occurrence as any).MANUAL_NEXT_DUE || 0) === 1;
   const dueBase = formatDateInput((occurrence as any).__overdueDueDate)
     || formatDateInput(occurrence.SCHEDULED_DATE)
     || formatDateInput(getEffectiveDate(occurrence));
@@ -367,11 +402,38 @@ function openCompleteWithDateDialog(occurrence: any): void {
     completeDateInput.max = todayStr;
     completeDateInput.disabled = false;
   }
+  if (completeNextDueField) {
+    completeNextDueField.style.display = manualNext ? '' : 'none';
+  }
+  if (completeNextDueInput) {
+    if (manualNext) {
+      const defaultNext = (dueBase && dueBase >= todayStr) ? dueBase : '';
+      completeNextDueInput.value = defaultNext;
+      completeNextDueInput.disabled = false;
+      completeNextDueInput.removeAttribute('min');
+      completeNextDueInput.removeAttribute('max');
+    } else {
+      completeNextDueInput.value = '';
+      completeNextDueInput.disabled = true;
+      completeNextDueInput.removeAttribute('min');
+      completeNextDueInput.removeAttribute('max');
+    }
+  }
   if (completeDialogDescription) {
-    if (dueBase) {
+    if (manualNext) {
+      const baseLabel = dueBase ? `（期日: ${formatDateWithWeekday(dueBase)}）` : '';
+      completeDialogDescription.textContent = `完了日と次の期日を入力してください。${baseLabel}`;
+    } else if (dueBase) {
       completeDialogDescription.textContent = `完了日を選択してください。（期日: ${formatDateWithWeekday(dueBase)}／本日: ${formatDateWithWeekday(todayStr)}）`;
     } else {
       completeDialogDescription.textContent = `完了日を選択してください。（本日: ${formatDateWithWeekday(todayStr)}）`;
+    }
+  }
+  if (completeDialogNote) {
+    if (manualNext) {
+      completeDialogNote.textContent = '次の期日は完了日以降の日付で指定してください。';
+    } else {
+      completeDialogNote.textContent = '完了日は期日から本日までの範囲で指定できます。';
     }
   }
   if (completeDialog && !completeDialog.open) {
@@ -402,6 +464,8 @@ async function confirmAndSubmitCompleteWithDate(): Promise<void> {
     window.alert('完了日が正しくありません。');
     return;
   }
+  const manualNext = currentCompleteOccurrence && Number((currentCompleteOccurrence as any).MANUAL_NEXT_DUE || 0) === 1;
+  let manualNextDueNormalized: string | undefined;
   if (currentCompleteDueDate) {
     const dueDate = parseDateOnly(currentCompleteDueDate);
     if (dueDate && selectedDate < dueDate) {
@@ -414,6 +478,33 @@ async function confirmAndSubmitCompleteWithDate(): Promise<void> {
   if (selectedDate > todayOnly) {
     window.alert('完了日に未来の日付は指定できません。');
     return;
+  }
+
+  if (manualNext) {
+    if (!completeNextDueInput) {
+      window.alert('次の期日入力欄が見つかりません。');
+      return;
+    }
+    const manualRaw = completeNextDueInput.value.trim();
+    if (!manualRaw) {
+      window.alert('次の期日を入力してください。');
+      return;
+    }
+    const normalizedNext = formatDateInput(manualRaw);
+    if (!normalizedNext) {
+      window.alert('次の期日は YYYY-MM-DD 形式で入力してください。');
+      return;
+    }
+    const nextDate = parseDateOnly(normalizedNext);
+    if (!nextDate) {
+      window.alert('次の期日が正しくありません。');
+      return;
+    }
+    if (nextDate < selectedDate) {
+      window.alert('次の期日は完了日以降の日付を指定してください。');
+      return;
+    }
+    manualNextDueNormalized = normalizedNext;
   }
 
   let comment: string | undefined;
@@ -435,6 +526,7 @@ async function confirmAndSubmitCompleteWithDate(): Promise<void> {
   try {
     const options: any = { completedAt };
     if (typeof comment !== 'undefined') options.comment = comment;
+    if (manualNext && manualNextDueNormalized) options.manualNextDue = manualNextDueNormalized;
     await window.electronAPI.completeOccurrence(currentCompleteOccurrence.OCCURRENCE_ID, options);
     if (completeDialog && completeDialog.open) completeDialog.close();
     currentCompleteOccurrence = null;
@@ -735,26 +827,33 @@ async function loadTasks(): Promise<void> {
       const btn = document.createElement('button');
       if (o.OCCURRENCE_ID) {
         if (o.OCC_STATUS !== 'done') {
+          const manualNext = Number((o as any).MANUAL_NEXT_DUE || 0) === 1;
           btn.textContent = '完了にする';
-          btn.onclick = async () => {
-            let options: any = {};
-            if (o.REQUIRE_COMPLETE_COMMENT) {
-              const input = await window.electronAPI.promptText({
-                title: '完了コメント',
-                label: 'コメントを入力',
-                placeholder: '',
-                ok: 'OK',
-                cancel: 'キャンセル'
-              });
-              if (input === null) return; // ユーザーがキャンセル
-              options.comment = String(input);
-            }
-            await window.electronAPI.completeOccurrence(o.OCCURRENCE_ID, options);
-            await loadTasks();
-          };
+          if (manualNext) {
+            btn.onclick = () => {
+              openCompleteWithDateDialog(o);
+            };
+          } else {
+            btn.onclick = async () => {
+              let options: any = {};
+              if (o.REQUIRE_COMPLETE_COMMENT) {
+                const input = await window.electronAPI.promptText({
+                  title: '完了コメント',
+                  label: 'コメントを入力',
+                  placeholder: '',
+                  ok: 'OK',
+                  cancel: 'キャンセル'
+                });
+                if (input === null) return; // ユーザーがキャンセル
+                options.comment = String(input);
+              }
+              await window.electronAPI.completeOccurrence(o.OCCURRENCE_ID, options);
+              await loadTasks();
+            };
+          }
           actions.appendChild(btn);
 
-          if (overdueDays > 0) {
+          if (!manualNext && overdueDays > 0) {
             const completeWithDateBtn = document.createElement('button');
             completeWithDateBtn.textContent = '日付を指定して完了にする';
             completeWithDateBtn.style.marginLeft = '8px';

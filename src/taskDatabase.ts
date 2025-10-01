@@ -57,6 +57,10 @@ export class TaskDatabase {
     if (!hasWeeklyDows) {
       await this.run("ALTER TABLE RECURRENCE_RULES ADD COLUMN WEEKLY_DOWS INTEGER DEFAULT 0");
     }
+    const hasManualNextDue = cols.some(c => String(c.name).toUpperCase() === 'MANUAL_NEXT_DUE');
+    if (!hasManualNextDue) {
+      await this.run("ALTER TABLE RECURRENCE_RULES ADD COLUMN MANUAL_NEXT_DUE INTEGER NOT NULL DEFAULT 0");
+    }
     const hasYearlyMonth = cols.some(c => String(c.name).toUpperCase() === 'YEARLY_MONTH');
     if (!hasYearlyMonth) {
       await this.run("ALTER TABLE RECURRENCE_RULES ADD COLUMN YEARLY_MONTH INTEGER");
@@ -202,7 +206,7 @@ export class TaskDatabase {
       `SELECT T.ID AS TASK_ID, T.START_DATE, T.START_TIME, R.MONTHLY_DAY, R.COUNT
        FROM TASKS T
        JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID AND R.FREQ = 'monthly'
-       WHERE T.IS_RECURRING = 1`
+       WHERE T.IS_RECURRING = 1 AND COALESCE(R.MANUAL_NEXT_DUE,0) = 0`
     );
     for (const t of tasks) {
       const monthlyDay = Number(t.MONTHLY_DAY);
@@ -263,7 +267,7 @@ export class TaskDatabase {
       `SELECT T.ID AS TASK_ID, T.START_DATE, T.START_TIME, R.MONTHLY_NTH, R.MONTHLY_NTH_DOW, R.COUNT
        FROM TASKS T
        JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID AND R.FREQ = 'monthly'
-       WHERE T.IS_RECURRING = 1 AND R.MONTHLY_NTH IS NOT NULL AND R.MONTHLY_NTH_DOW IS NOT NULL`
+       WHERE T.IS_RECURRING = 1 AND COALESCE(R.MANUAL_NEXT_DUE,0) = 0 AND R.MONTHLY_NTH IS NOT NULL AND R.MONTHLY_NTH_DOW IS NOT NULL`
     );
     for (const t of nthTasks) {
       const nth = Number(t.MONTHLY_NTH);
@@ -323,7 +327,7 @@ export class TaskDatabase {
               R.YEARLY_MONTH, R.MONTHLY_DAY, R.COUNT
        FROM TASKS T
        JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID AND R.FREQ = 'yearly'
-       WHERE T.IS_RECURRING = 1`
+       WHERE T.IS_RECURRING = 1 AND COALESCE(R.MANUAL_NEXT_DUE,0) = 0`
     );
     for (const t of tasks) {
       const month = Number(t.YEARLY_MONTH || 0);
@@ -392,7 +396,7 @@ export class TaskDatabase {
               COALESCE(R.INTERVAL_ANCHOR, 'scheduled') AS INTERVAL_ANCHOR
        FROM TASKS T
        JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID AND R.FREQ = 'daily'
-       WHERE T.IS_RECURRING = 1`, [defaultDaysAhead]
+       WHERE T.IS_RECURRING = 1 AND COALESCE(R.MANUAL_NEXT_DUE,0) = 0`, [defaultDaysAhead]
     );
     for (const t of tasks) {
       const interval = Math.max(1, Number(t.INTERVAL || 1));
@@ -464,7 +468,7 @@ export class TaskDatabase {
               COALESCE(R.COUNT,0) AS COUNT
        FROM TASKS T
        JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID AND R.FREQ = 'weekly'
-       WHERE T.IS_RECURRING = 1`
+       WHERE T.IS_RECURRING = 1 AND COALESCE(R.MANUAL_NEXT_DUE,0) = 0`
     );
     for (const t of tasks) {
       const dowsMask = Number(t.WEEKLY_DOWS || 0);
@@ -563,7 +567,7 @@ export class TaskDatabase {
               COALESCE(R.COUNT, 0) AS COUNT
        FROM TASKS T
        JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID AND R.FREQ = 'daily' AND COALESCE(R.INTERVAL_ANCHOR,'scheduled') = 'completed'
-       WHERE T.IS_RECURRING = 1`
+       WHERE T.IS_RECURRING = 1 AND COALESCE(R.MANUAL_NEXT_DUE,0) = 0`
     );
     const dateOnly = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     for (const t of tasks) {
@@ -625,12 +629,14 @@ export class TaskDatabase {
               R.FREQ, R.MONTHLY_DAY, R.MONTHLY_NTH, R.MONTHLY_NTH_DOW, R.COUNT,
               COALESCE(R.WEEKLY_DOWS,0) AS WEEKLY_DOWS,
               COALESCE(R.INTERVAL,1) AS INTERVAL,
-              COALESCE(R.INTERVAL_ANCHOR,'scheduled') AS INTERVAL_ANCHOR
+              COALESCE(R.INTERVAL_ANCHOR,'scheduled') AS INTERVAL_ANCHOR,
+              COALESCE(R.MANUAL_NEXT_DUE,0) AS MANUAL_NEXT_DUE
        FROM TASKS T
        LEFT JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID
        WHERE T.ID = ?`, [taskId]
     );
     if (!task || !task.IS_RECURRING) return;
+    if (Number((task as any).MANUAL_NEXT_DUE || 0) === 1) return;
     const count = Number(task.COUNT || 0);
     if (!task.START_DATE || !(count >= 1)) return; // only finite counts
     const startDate = new Date(task.START_DATE as string);
@@ -767,6 +773,61 @@ export class TaskDatabase {
     }
   }
 
+  private async ensureManualNextOccurrence(taskId: number, scheduledDate: string | null, startTime: string | null): Promise<void> {
+    const normalizedDate = scheduledDate ? String(scheduledDate).split('T')[0] : null;
+    const nowIso = this.nowIso();
+    const pendings = await this.all<any>(
+      `SELECT ID, SCHEDULED_DATE, SCHEDULED_TIME FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND STATUS = 'pending' ORDER BY ID ASC`,
+      [taskId]
+    );
+
+    if (!normalizedDate) {
+      for (const occ of pendings) {
+        await this.run('DELETE FROM TASK_OCCURRENCES WHERE ID = ?', [occ.ID]);
+        try { await this.logEvent('occ.delete', 'system', taskId, occ.ID, { reason: 'manual.prune.noDate', previousDate: occ.SCHEDULED_DATE }); } catch {}
+      }
+      return;
+    }
+
+    let primary = pendings.find((o: any) => o.SCHEDULED_DATE === normalizedDate) || null;
+    if (!primary && pendings.length > 0) {
+      primary = pendings[0];
+    }
+
+    if (primary) {
+      const needsUpdate = primary.SCHEDULED_DATE !== normalizedDate || (primary.SCHEDULED_TIME ?? null) !== (startTime ?? null);
+      if (needsUpdate) {
+        await this.run(
+          `UPDATE TASK_OCCURRENCES SET SCHEDULED_DATE = ?, SCHEDULED_TIME = ?, UPDATED_AT = ? WHERE ID = ?`,
+          [normalizedDate, startTime || null, nowIso, primary.ID]
+        );
+        try {
+          await this.logEvent('occ.reschedule', 'system', taskId, primary.ID, {
+            reason: 'manual.realign',
+            previousDate: primary.SCHEDULED_DATE,
+            previousTime: primary.SCHEDULED_TIME ?? null,
+            newDate: normalizedDate,
+            newTime: startTime || null
+          });
+        } catch {}
+      }
+    } else {
+      const newId = await this.run(
+        `INSERT INTO TASK_OCCURRENCES (TASK_ID, SCHEDULED_DATE, SCHEDULED_TIME, STATUS, CREATED_AT, UPDATED_AT)
+         VALUES (?, ?, ?, 'pending', ?, ?)`,
+        [taskId, normalizedDate, startTime || null, nowIso, nowIso]
+      );
+      try { await this.logEvent('occ.autocreate', 'system', taskId, newId, { reason: 'manual.ensure', date: normalizedDate }); } catch {}
+      primary = { ID: newId, SCHEDULED_DATE: normalizedDate, SCHEDULED_TIME: startTime || null };
+    }
+
+    for (const occ of pendings) {
+      if (primary && occ.ID === primary.ID) continue;
+      await this.run('DELETE FROM TASK_OCCURRENCES WHERE ID = ?', [occ.ID]);
+      try { await this.logEvent('occ.delete', 'system', taskId, occ.ID, { reason: 'manual.prune', previousDate: occ.SCHEDULED_DATE }); } catch {}
+    }
+  }
+
   async listOccurrences(params: { from?: string; to?: string; query?: string; status?: string } = {}): Promise<any[]> {
     // Ensure occurrences exist for both recurring and single tasks
     await this.ensureSingleOccurrences();
@@ -785,7 +846,7 @@ export class TaskDatabase {
     const sql = `SELECT O.ID AS OCCURRENCE_ID, O.SCHEDULED_DATE, O.SCHEDULED_TIME, O.DEFERRED_DATE, O.STATUS AS OCC_STATUS, O.COMPLETED_AT,
                         T.ID AS TASK_ID, T.TITLE, T.DESCRIPTION, T.DUE_AT,
                         T.START_DATE, T.START_TIME, T.IS_RECURRING, T.REQUIRE_COMPLETE_COMMENT,
-                        R.FREQ, R.MONTHLY_DAY, R.COUNT
+                        R.FREQ, R.MONTHLY_DAY, R.COUNT, R.MANUAL_NEXT_DUE
                  FROM TASK_OCCURRENCES O
                  JOIN TASKS T ON T.ID = O.TASK_ID
                  LEFT JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID
@@ -805,14 +866,15 @@ export class TaskDatabase {
     return rows;
   }
 
-  async completeOccurrence(occurrenceId: number, options: { comment?: string; completedAt?: string } = {}): Promise<void> {
+  async completeOccurrence(occurrenceId: number, options: { comment?: string; completedAt?: string; manualNextDue?: string } = {}): Promise<void> {
     const now = this.nowIso();
     const completedAtIso = this.normalizeCompletedAtInput(options?.completedAt) ?? now;
     const occ = await this.get<any>(
       `SELECT O.ID, O.TASK_ID, O.SCHEDULED_DATE, T.START_DATE, T.START_TIME,
               R.FREQ, R.MONTHLY_DAY, R.MONTHLY_NTH, R.MONTHLY_NTH_DOW, R.COUNT, R.YEARLY_MONTH,
               COALESCE(R.INTERVAL,1) AS INTERVAL,
-              COALESCE(R.INTERVAL_ANCHOR,'scheduled') AS INTERVAL_ANCHOR
+              COALESCE(R.INTERVAL_ANCHOR,'scheduled') AS INTERVAL_ANCHOR,
+              COALESCE(R.MANUAL_NEXT_DUE,0) AS MANUAL_NEXT_DUE
        FROM TASK_OCCURRENCES O
        JOIN TASKS T ON T.ID = O.TASK_ID
        LEFT JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID
@@ -828,6 +890,25 @@ export class TaskDatabase {
       await this.logEvent('occ.complete', 'user', Number(occ.TASK_ID), occurrenceId, details);
     } catch {}
     // Generate next occurrence for recurring tasks
+    const manualNextDue = Number((occ as any).MANUAL_NEXT_DUE || 0) === 1;
+    if (manualNextDue) {
+      const nextDueRaw = options && typeof options.manualNextDue === 'string' ? options.manualNextDue : undefined;
+      if (!nextDueRaw) {
+        throw new Error('次の期日が指定されていません');
+      }
+      const nextDate = this.normalizeDateOnly(nextDueRaw);
+      if (typeof occ.SCHEDULED_DATE === 'string' && nextDate < occ.SCHEDULED_DATE) {
+        throw new Error('次の期日は現在の期日以降を指定してください');
+      }
+      const scheduledTime = occ.START_TIME || null;
+      await this.run('UPDATE TASKS SET DUE_AT = ?, START_DATE = ?, UPDATED_AT = ? WHERE ID = ?', [nextDate, nextDate, now, occ.TASK_ID]);
+      await this.ensureManualNextOccurrence(occ.TASK_ID, nextDate, scheduledTime);
+      try {
+        await this.logEvent('task.manual.nextDue', 'user', Number(occ.TASK_ID), occurrenceId, { previousDate: occ.SCHEDULED_DATE, nextDate });
+      } catch {}
+      return;
+    }
+
     if (occ.FREQ === 'monthly' && occ.MONTHLY_DAY && (!occ.COUNT || Number(occ.COUNT) === 0)) {
       const d = new Date(occ.SCHEDULED_DATE as string);
       const nextMonth0 = (d.getMonth() + 1) % 12;
@@ -1028,7 +1109,8 @@ export class TaskDatabase {
                         R.FREQ, R.MONTHLY_DAY, R.MONTHLY_NTH, R.MONTHLY_NTH_DOW, R.COUNT, R.HORIZON_DAYS,
                         R.INTERVAL, COALESCE(R.INTERVAL_ANCHOR,'scheduled') AS INTERVAL_ANCHOR,
                         R.YEARLY_MONTH,
-                        COALESCE(R.WEEKLY_DOWS,0) AS WEEKLY_DOWS
+                        COALESCE(R.WEEKLY_DOWS,0) AS WEEKLY_DOWS,
+                        COALESCE(R.MANUAL_NEXT_DUE,0) AS MANUAL_NEXT_DUE
                  FROM TASKS T
                  LEFT JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID
                  ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
@@ -1041,7 +1123,7 @@ export class TaskDatabase {
   }
 
   async getTask(id: number): Promise<any | undefined> {
-    const sql = `SELECT T.*, R.FREQ, R.MONTHLY_DAY, R.MONTHLY_NTH, R.MONTHLY_NTH_DOW, R.COUNT, R.HORIZON_DAYS, R.INTERVAL, R.INTERVAL_ANCHOR, R.YEARLY_MONTH, COALESCE(R.WEEKLY_DOWS,0) AS WEEKLY_DOWS
+    const sql = `SELECT T.*, R.FREQ, R.MONTHLY_DAY, R.MONTHLY_NTH, R.MONTHLY_NTH_DOW, R.COUNT, R.HORIZON_DAYS, R.INTERVAL, R.INTERVAL_ANCHOR, R.YEARLY_MONTH, COALESCE(R.WEEKLY_DOWS,0) AS WEEKLY_DOWS, COALESCE(R.MANUAL_NEXT_DUE,0) AS MANUAL_NEXT_DUE
                  FROM TASKS T
                  LEFT JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID
                  WHERE T.ID = ?`;
@@ -1143,6 +1225,9 @@ export class TaskDatabase {
       is_recurring: payload.isRecurring ? 1 : 0,
       require_complete_comment: payload.requireCompleteComment ? 1 : 0
     };
+    const rec = payload.recurrence;
+    const manualNextDue = !!(rec && (rec.manualNextDue || rec.freq === 'manualNext'));
+    if (manualNextDue) p.is_recurring = 1;
     // Default start_date/time if unspecified
     if (!p.start_date) {
       const d = new Date();
@@ -1154,50 +1239,56 @@ export class TaskDatabase {
     if (!p.start_time) {
       p.start_time = '00:00';
     }
+    if (manualNextDue && p.due_at) {
+      p.start_date = p.due_at.split('T')[0];
+    }
     const sql = `INSERT INTO TASKS (TITLE, DESCRIPTION, DUE_AT, START_DATE, START_TIME, IS_RECURRING, REQUIRE_COMPLETE_COMMENT, CREATED_AT, UPDATED_AT)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
     const id = await this.run(sql, [p.title, p.description, p.due_at, p.start_date, p.start_time, p.is_recurring, p.require_complete_comment, now, now]);
     // Insert recurrence rule: for recurring, from payload; for single, COUNT=1
-    const rec = payload.recurrence;
-    if (p.is_recurring && rec && rec.freq === 'monthly' && rec.monthlyDay && rec.monthlyDay >= 1 && rec.monthlyDay <= 31) {
-      const rsql = `INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, CREATED_AT, UPDATED_AT)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+    if (p.is_recurring && manualNextDue) {
+      const rsql = `INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, MANUAL_NEXT_DUE, CREATED_AT, UPDATED_AT)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+      await this.run(rsql, [id, 'monthly', null, null, null, 0, 1, now, now]);
+    } else if (p.is_recurring && rec && rec.freq === 'monthly' && rec.monthlyDay && rec.monthlyDay >= 1 && rec.monthlyDay <= 31) {
+      const rsql = `INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, MANUAL_NEXT_DUE, CREATED_AT, UPDATED_AT)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
       const count = Math.max(0, Number((rec as any).count || 0) || 0); // 0=無限
-      await this.run(rsql, [id, 'monthly', rec.monthlyDay, null, null, count, now, now]);
+      await this.run(rsql, [id, 'monthly', rec.monthlyDay, null, null, count, 0, now, now]);
     } else if (p.is_recurring && rec && rec.freq === 'monthlyNth' && typeof rec.monthlyNth === 'number' && typeof rec.monthlyNthDow === 'number') {
-      const rsql = `INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, CREATED_AT, UPDATED_AT)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+      const rsql = `INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, MANUAL_NEXT_DUE, CREATED_AT, UPDATED_AT)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
       const count = Math.max(0, Number((rec as any).count || 0) || 0);
-      await this.run(rsql, [id, 'monthly', null, rec.monthlyNth, rec.monthlyNthDow, count, now, now]);
+      await this.run(rsql, [id, 'monthly', null, rec.monthlyNth, rec.monthlyNthDow, count, 0, now, now]);
     } else if (p.is_recurring && rec && rec.freq === 'yearly') {
-      const rsql = `INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, YEARLY_MONTH, MONTHLY_DAY, COUNT, CREATED_AT, UPDATED_AT)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)`;
+      const rsql = `INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, YEARLY_MONTH, MONTHLY_DAY, COUNT, MANUAL_NEXT_DUE, CREATED_AT, UPDATED_AT)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
       const count = Math.max(0, Number((rec as any).count || 0) || 0);
       const month = Math.max(1, Math.min(12, Number((rec as any).yearlyMonth || (rec as any).month || 0)));
       const day = Math.max(1, Math.min(31, Number((rec as any).yearlyDay || (rec as any).monthlyDay || 0)));
-      await this.run(rsql, [id, 'yearly', month, day, count, now, now]);
+      await this.run(rsql, [id, 'yearly', month, day, count, 0, now, now]);
     } else if (p.is_recurring && rec && rec.freq === 'weekly') {
-      const rsql = `INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, WEEKLY_DOWS, INTERVAL, COUNT, CREATED_AT, UPDATED_AT)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)`;
+      const rsql = `INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, WEEKLY_DOWS, INTERVAL, COUNT, MANUAL_NEXT_DUE, CREATED_AT, UPDATED_AT)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
       const count = Math.max(0, Number((rec as any).count || 0) || 0);
       const dows = Math.max(0, Number((rec as any).weeklyDows || 0));
       const interval = Math.max(1, Number((rec as any).interval || 1));
-      await this.run(rsql, [id, 'weekly', dows, interval, count, now, now]);
+      await this.run(rsql, [id, 'weekly', dows, interval, count, 0, now, now]);
     } else if (p.is_recurring && rec && rec.freq === 'daily') {
-      const rsql = `INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, COUNT, HORIZON_DAYS, INTERVAL, INTERVAL_ANCHOR, CREATED_AT, UPDATED_AT)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+      const rsql = `INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, COUNT, HORIZON_DAYS, INTERVAL, INTERVAL_ANCHOR, MANUAL_NEXT_DUE, CREATED_AT, UPDATED_AT)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
       const count = Math.max(0, Number((rec as any).count || 0) || 0);
       let horizon = Number((rec as any).horizonDays || 14);
       if (!isFinite(horizon) || horizon <= 0) horizon = 14;
       if (horizon > 365) horizon = 365;
       const interval = Math.max(1, Number((rec as any).interval || 1));
       const anchor = String((rec as any).anchor || 'scheduled');
-      await this.run(rsql, [id, 'daily', null, count, horizon, interval, anchor, now, now]);
+      await this.run(rsql, [id, 'daily', null, count, horizon, interval, anchor, 0, now, now]);
     } else {
       // Non-recurring: create a rule row with COUNT=1
-      const rsql = `INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, CREATED_AT, UPDATED_AT)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
-      await this.run(rsql, [id, 'monthly', null, null, null, 1, now, now]);
+      const rsql = `INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, MANUAL_NEXT_DUE, CREATED_AT, UPDATED_AT)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+      await this.run(rsql, [id, 'monthly', null, null, null, 1, 0, now, now]);
     }
 
     // For single tasks, ensure one occurrence exists immediately
@@ -1214,6 +1305,10 @@ export class TaskDatabase {
           try { await this.logEvent('occ.autocreate', 'system', id, newId, { reason: 'single.ensure', date: scheduledDate }); } catch {}
         }
       }
+    } else if (manualNextDue) {
+      const scheduledDateRaw = p.due_at ? String(p.due_at) : (p.start_date ?? null);
+      const scheduledDate = scheduledDateRaw ? scheduledDateRaw.split('T')[0] : null;
+      await this.ensureManualNextOccurrence(id, scheduledDate, p.start_time || null);
     } else {
       // Finite count: reconcile occurrences to match count
       const count = Number((rec && rec.count) || 0);
@@ -1244,6 +1339,8 @@ export class TaskDatabase {
     let before: any = null;
     try { before = await this.getTask(id); } catch {}
     const sql = `UPDATE TASKS SET TITLE = ?, DESCRIPTION = ?, DUE_AT = ?, START_DATE = ?, START_TIME = ?, IS_RECURRING = ?, REQUIRE_COMPLETE_COMMENT = ?, UPDATED_AT = ? WHERE ID = ?`;
+    const rec = payload.recurrence;
+    const manualNextDue = !!(rec && (rec.manualNextDue || rec.freq === 'manualNext'));
     const p = {
       title: payload.title || '',
       description: payload.description || null,
@@ -1253,32 +1350,47 @@ export class TaskDatabase {
       is_recurring: payload.isRecurring ? 1 : 0,
       require_complete_comment: payload.requireCompleteComment ? 1 : 0
     };
+    if (manualNextDue) p.is_recurring = 1;
+    if (manualNextDue && p.due_at) {
+      p.start_date = p.due_at.split('T')[0];
+    }
     await this.run(sql, [p.title, p.description, p.due_at, p.start_date, p.start_time, p.is_recurring, p.require_complete_comment, now, id]);
     // Upsert/delete recurrence rule based on payload
-    const rec = payload.recurrence;
-    if (p.is_recurring && rec && rec.freq === 'monthly' && rec.monthlyDay && rec.monthlyDay >= 1 && rec.monthlyDay <= 31) {
-      // Check if rule exists
-      const existing = await this.get<any>('SELECT ID FROM RECURRENCE_RULES WHERE TASK_ID = ?', [id]);
+    const existing = await this.get<any>('SELECT ID FROM RECURRENCE_RULES WHERE TASK_ID = ?', [id]);
+    if (p.is_recurring && manualNextDue) {
+      if (existing && existing.ID) {
+        await this.run(
+          `UPDATE RECURRENCE_RULES SET FREQ = ?, MONTHLY_DAY = NULL, MONTHLY_NTH = NULL, MONTHLY_NTH_DOW = NULL,
+             WEEKLY_DOWS = NULL, YEARLY_MONTH = NULL, HORIZON_DAYS = NULL, INTERVAL = 1,
+             INTERVAL_ANCHOR = 'scheduled', COUNT = 0, MANUAL_NEXT_DUE = 1, UPDATED_AT = ? WHERE TASK_ID = ?`,
+          ['monthly', now, id]
+        );
+      } else {
+        await this.run(
+          `INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, COUNT, MANUAL_NEXT_DUE, CREATED_AT, UPDATED_AT)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [id, 'monthly', 0, 1, now, now]
+        );
+      }
+    } else if (p.is_recurring && rec && rec.freq === 'monthly' && rec.monthlyDay && rec.monthlyDay >= 1 && rec.monthlyDay <= 31) {
       const count = Math.max(0, Number((rec as any).count || 0) || 0);
       if (existing && existing.ID) {
-        await this.run('UPDATE RECURRENCE_RULES SET FREQ = ?, MONTHLY_DAY = ?, MONTHLY_NTH = NULL, MONTHLY_NTH_DOW = NULL, COUNT = ?, UPDATED_AT = ? WHERE TASK_ID = ?',
+        await this.run('UPDATE RECURRENCE_RULES SET FREQ = ?, MONTHLY_DAY = ?, MONTHLY_NTH = NULL, MONTHLY_NTH_DOW = NULL, COUNT = ?, MANUAL_NEXT_DUE = 0, UPDATED_AT = ? WHERE TASK_ID = ?',
           ['monthly', rec.monthlyDay, count, now, id]);
       } else {
-        await this.run('INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, CREATED_AT, UPDATED_AT) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-          [id, 'monthly', rec.monthlyDay, null, null, count, now, now]);
+        await this.run('INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, MANUAL_NEXT_DUE, CREATED_AT, UPDATED_AT) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [id, 'monthly', rec.monthlyDay, null, null, count, 0, now, now]);
       }
     } else if (p.is_recurring && rec && rec.freq === 'monthlyNth' && typeof rec.monthlyNth === 'number' && typeof rec.monthlyNthDow === 'number') {
-      const existing = await this.get<any>('SELECT ID FROM RECURRENCE_RULES WHERE TASK_ID = ?', [id]);
       const count = Math.max(0, Number((rec as any).count || 0) || 0);
       if (existing && existing.ID) {
-        await this.run('UPDATE RECURRENCE_RULES SET FREQ = ?, MONTHLY_DAY = NULL, MONTHLY_NTH = ?, MONTHLY_NTH_DOW = ?, COUNT = ?, UPDATED_AT = ? WHERE TASK_ID = ?',
+        await this.run('UPDATE RECURRENCE_RULES SET FREQ = ?, MONTHLY_DAY = NULL, MONTHLY_NTH = ?, MONTHLY_NTH_DOW = ?, COUNT = ?, MANUAL_NEXT_DUE = 0, UPDATED_AT = ? WHERE TASK_ID = ?',
           ['monthly', rec.monthlyNth, rec.monthlyNthDow, count, now, id]);
       } else {
-        await this.run('INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, CREATED_AT, UPDATED_AT) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-          [id, 'monthly', null, rec.monthlyNth, rec.monthlyNthDow, count, now, now]);
+        await this.run('INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, MANUAL_NEXT_DUE, CREATED_AT, UPDATED_AT) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [id, 'monthly', null, rec.monthlyNth, rec.monthlyNthDow, count, 0, now, now]);
       }
     } else if (p.is_recurring && rec && rec.freq === 'daily') {
-      const existing = await this.get<any>('SELECT ID FROM RECURRENCE_RULES WHERE TASK_ID = ?', [id]);
       const count = Math.max(0, Number((rec as any).count || 0) || 0);
       if (existing && existing.ID) {
         let horizon = Number((rec as any).horizonDays || 14);
@@ -1286,7 +1398,7 @@ export class TaskDatabase {
         if (horizon > 365) horizon = 365;
         const interval = Math.max(1, Number((rec as any).interval || 1));
         const anchor = String((rec as any).anchor || 'scheduled');
-        await this.run('UPDATE RECURRENCE_RULES SET FREQ = ?, MONTHLY_DAY = NULL, MONTHLY_NTH = NULL, MONTHLY_NTH_DOW = NULL, COUNT = ?, HORIZON_DAYS = ?, INTERVAL = ?, INTERVAL_ANCHOR = ?, UPDATED_AT = ? WHERE TASK_ID = ?',
+        await this.run('UPDATE RECURRENCE_RULES SET FREQ = ?, MONTHLY_DAY = NULL, MONTHLY_NTH = NULL, MONTHLY_NTH_DOW = NULL, COUNT = ?, HORIZON_DAYS = ?, INTERVAL = ?, INTERVAL_ANCHOR = ?, MANUAL_NEXT_DUE = 0, UPDATED_AT = ? WHERE TASK_ID = ?',
           ['daily', count, horizon, interval, anchor, now, id]);
       } else {
         let horizon = Number((rec as any).horizonDays || 14);
@@ -1294,42 +1406,39 @@ export class TaskDatabase {
         if (horizon > 365) horizon = 365;
         const interval = Math.max(1, Number((rec as any).interval || 1));
         const anchor = String((rec as any).anchor || 'scheduled');
-        await this.run('INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, HORIZON_DAYS, INTERVAL, INTERVAL_ANCHOR, CREATED_AT, UPDATED_AT) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [id, 'daily', null, null, null, count, horizon, interval, anchor, now, now]);
+        await this.run('INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, HORIZON_DAYS, INTERVAL, INTERVAL_ANCHOR, MANUAL_NEXT_DUE, CREATED_AT, UPDATED_AT) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [id, 'daily', null, null, null, count, horizon, interval, anchor, 0, now, now]);
       }
     } else if (p.is_recurring && rec && rec.freq === 'weekly') {
-      const existing = await this.get<any>('SELECT ID FROM RECURRENCE_RULES WHERE TASK_ID = ?', [id]);
       const count = Math.max(0, Number((rec as any).count || 0) || 0);
       const dows = Math.max(0, Number((rec as any).weeklyDows || 0));
       const interval = Math.max(1, Number((rec as any).interval || 1));
       if (existing && existing.ID) {
-        await this.run("UPDATE RECURRENCE_RULES SET FREQ = ?, MONTHLY_DAY = NULL, MONTHLY_NTH = NULL, MONTHLY_NTH_DOW = NULL, WEEKLY_DOWS = ?, INTERVAL = ?, COUNT = ?, INTERVAL_ANCHOR = 'scheduled', UPDATED_AT = ? WHERE TASK_ID = ?",
+        await this.run("UPDATE RECURRENCE_RULES SET FREQ = ?, MONTHLY_DAY = NULL, MONTHLY_NTH = NULL, MONTHLY_NTH_DOW = NULL, WEEKLY_DOWS = ?, INTERVAL = ?, COUNT = ?, INTERVAL_ANCHOR = 'scheduled', MANUAL_NEXT_DUE = 0, UPDATED_AT = ? WHERE TASK_ID = ?",
           ['weekly', dows, interval, count, now, id]);
       } else {
-        await this.run("INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, WEEKLY_DOWS, INTERVAL, COUNT, CREATED_AT, UPDATED_AT) VALUES (?, ?, ?, ?, ?, ?, ?)",
-          [id, 'weekly', dows, interval, count, now, now]);
+        await this.run("INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, WEEKLY_DOWS, INTERVAL, COUNT, MANUAL_NEXT_DUE, CREATED_AT, UPDATED_AT) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          [id, 'weekly', dows, interval, count, 0, now, now]);
       }
     } else if (p.is_recurring && rec && rec.freq === 'yearly') {
-      const existing = await this.get<any>('SELECT ID FROM RECURRENCE_RULES WHERE TASK_ID = ?', [id]);
       const count = Math.max(0, Number((rec as any).count || 0) || 0);
       const month = Math.max(1, Math.min(12, Number((rec as any).yearlyMonth || (rec as any).month || 0)));
       const day = Math.max(1, Math.min(31, Number((rec as any).yearlyDay || (rec as any).monthlyDay || 0)));
       if (existing && existing.ID) {
-        await this.run("UPDATE RECURRENCE_RULES SET FREQ = ?, YEARLY_MONTH = ?, MONTHLY_DAY = ?, MONTHLY_NTH = NULL, MONTHLY_NTH_DOW = NULL, WEEKLY_DOWS = NULL, HORIZON_DAYS = NULL, INTERVAL = 1, INTERVAL_ANCHOR = 'scheduled', COUNT = ?, UPDATED_AT = ? WHERE TASK_ID = ?",
+        await this.run("UPDATE RECURRENCE_RULES SET FREQ = ?, YEARLY_MONTH = ?, MONTHLY_DAY = ?, MONTHLY_NTH = NULL, MONTHLY_NTH_DOW = NULL, WEEKLY_DOWS = NULL, HORIZON_DAYS = NULL, INTERVAL = 1, INTERVAL_ANCHOR = 'scheduled', COUNT = ?, MANUAL_NEXT_DUE = 0, UPDATED_AT = ? WHERE TASK_ID = ?",
           ['yearly', month, day, count, now, id]);
       } else {
-        await this.run("INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, YEARLY_MONTH, MONTHLY_DAY, COUNT, CREATED_AT, UPDATED_AT) VALUES (?, ?, ?, ?, ?, ?, ?)",
-          [id, 'yearly', month, day, count, now, now]);
+        await this.run("INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, YEARLY_MONTH, MONTHLY_DAY, COUNT, MANUAL_NEXT_DUE, CREATED_AT, UPDATED_AT) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          [id, 'yearly', month, day, count, 0, now, now]);
       }
     } else {
       // Non-recurring: ensure rule with COUNT=1 exists
-      const existing = await this.get<any>('SELECT ID FROM RECURRENCE_RULES WHERE TASK_ID = ?', [id]);
       if (existing && existing.ID) {
-        await this.run('UPDATE RECURRENCE_RULES SET FREQ = ?, MONTHLY_DAY = NULL, MONTHLY_NTH = NULL, MONTHLY_NTH_DOW = NULL, COUNT = ?, UPDATED_AT = ? WHERE TASK_ID = ?',
+        await this.run('UPDATE RECURRENCE_RULES SET FREQ = ?, MONTHLY_DAY = NULL, MONTHLY_NTH = NULL, MONTHLY_NTH_DOW = NULL, COUNT = ?, MANUAL_NEXT_DUE = 0, UPDATED_AT = ? WHERE TASK_ID = ?',
           ['monthly', 1, now, id]);
       } else {
-        await this.run('INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, CREATED_AT, UPDATED_AT) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-          [id, 'monthly', null, null, null, 1, now, now]);
+        await this.run('INSERT INTO RECURRENCE_RULES (TASK_ID, FREQ, MONTHLY_DAY, MONTHLY_NTH, MONTHLY_NTH_DOW, COUNT, MANUAL_NEXT_DUE, CREATED_AT, UPDATED_AT) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [id, 'monthly', null, null, null, 1, 0, now, now]);
       }
       const scheduledDateRaw = p.due_at ? String(p.due_at) : (p.start_date ?? null);
       const scheduledDate = scheduledDateRaw ? scheduledDateRaw.split('T')[0] : null;
@@ -1380,12 +1489,18 @@ export class TaskDatabase {
     }
 
     // If recurring with finite count, reconcile occurrences
-    if (p.is_recurring && rec && typeof rec.count !== 'undefined' && Number(rec.count) >= 1) {
+    if (p.is_recurring && !manualNextDue && rec && typeof rec.count !== 'undefined' && Number(rec.count) >= 1) {
       if (rec && rec.freq === 'daily' && String((rec as any).anchor || 'scheduled') === 'completed') {
         // 完了基準: pendingはensure側で1件だけ維持
       } else {
         await this.reconcileOccurrencesForTask(id);
       }
+    }
+
+    if (manualNextDue) {
+      const scheduledDateRaw = p.due_at ? String(p.due_at) : (p.start_date ?? null);
+      const scheduledDate = scheduledDateRaw ? scheduledDateRaw.split('T')[0] : null;
+      await this.ensureManualNextOccurrence(id, scheduledDate, p.start_time || null);
     }
 
     // Tags

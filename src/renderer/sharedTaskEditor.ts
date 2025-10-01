@@ -20,6 +20,7 @@ export type TaskRow = {
   COUNT?: number | null;
   HORIZON_DAYS?: number | null;
   WEEKLY_DOWS?: number | null;
+  MANUAL_NEXT_DUE?: number | null;
 };
 
 export type RecurrenceUIMode =
@@ -30,7 +31,8 @@ export type RecurrenceUIMode =
   | 'weekly'
   | 'monthly'
   | 'monthlyNth'
-  | 'yearly';
+  | 'yearly'
+  | 'manualNext';
 
 export function formatDateInput(dateStr?: string | null): string {
   if (!dateStr) return '';
@@ -46,6 +48,7 @@ export function formatDateInput(dateStr?: string | null): string {
 // DBの行からUIモードを推定
 export function inferRecurrenceModeFromDb(t: TaskRow): RecurrenceUIMode {
   if (!t.IS_RECURRING) return 'once';
+  if (Number((t as any).MANUAL_NEXT_DUE || 0) === 1) return 'manualNext';
   if (t.FREQ === 'monthly') {
     if ((t as any).MONTHLY_NTH !== null && typeof (t as any).MONTHLY_NTH !== 'undefined') return 'monthlyNth';
     return 'monthly';
@@ -77,4 +80,3 @@ export function weeklyArrayFromMask(mask: number): number[] {
   for (let i = 0; i <= 6; i++) if (mask & (1 << i)) out.push(i);
   return out;
 }
-
