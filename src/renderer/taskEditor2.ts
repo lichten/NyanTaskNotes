@@ -2,6 +2,7 @@ import { TaskRow, RecurrenceUIMode, formatDateInput, inferRecurrenceModeFromDb, 
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const DEFAULT_DIFF_RANGE = '8w';
+const MAX_OFFSET_DAYS = 365;
 
 let allTagNames: string[] = [];
 let selectedTags: string[] = [];
@@ -83,17 +84,53 @@ function getPreviewWindow(range: string): { from?: string; to?: string; weeksAhe
   return res;
 }
 
+function clampOffsetMagnitude(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.min(MAX_OFFSET_DAYS, Math.round(value));
+}
+
+function getOccurrenceOffsetDays(): number {
+  const valueEl = document.getElementById('occurrenceOffsetValue') as HTMLInputElement | null;
+  const dirEl = document.getElementById('occurrenceOffsetDirection') as HTMLSelectElement | null;
+  if (!valueEl || !dirEl) return 0;
+  const raw = Number((valueEl.value || '0').trim() || 0);
+  const magnitude = clampOffsetMagnitude(raw);
+  if (magnitude === 0) {
+    if (valueEl.value !== '') valueEl.value = '';
+    return 0;
+  }
+  if (magnitude !== raw) valueEl.value = String(magnitude);
+  const direction = dirEl.value === 'before' ? -1 : 1;
+  return magnitude * direction;
+}
+
+function setOccurrenceOffsetDays(offset: number | null | undefined): void {
+  const valueEl = document.getElementById('occurrenceOffsetValue') as HTMLInputElement | null;
+  const dirEl = document.getElementById('occurrenceOffsetDirection') as HTMLSelectElement | null;
+  if (!valueEl || !dirEl) return;
+  const n = Number(offset || 0);
+  if (!Number.isFinite(n) || n === 0) {
+    valueEl.value = '';
+    dirEl.value = 'after';
+    return;
+  }
+  const magnitude = clampOffsetMagnitude(Math.abs(n));
+  valueEl.value = String(magnitude);
+  dirEl.value = n < 0 ? 'before' : 'after';
+}
+
 function buildRecurrenceFromUI(): any {
   const mode = (el<HTMLSelectElement>('isRecurring').value as RecurrenceUIMode);
   const rcStr = (el<HTMLInputElement>('recurrenceCount').value || '').trim();
   let count = rcStr ? Number(rcStr) : 0; if (!isFinite(count) || count < 0) count = 0;
+  const offsetDays = getOccurrenceOffsetDays();
   if (mode === 'manualNext') {
-    return { freq: 'manualNext', manualNextDue: true };
+    return { freq: 'manualNext', manualNextDue: true, occurrenceOffsetDays: 0 };
   }
   if (mode === 'daily') {
     const dhStr = (el<HTMLInputElement>('dailyHorizonDays').value || '').trim();
     let horizonDays = dhStr ? Number(dhStr) : 14; if (!isFinite(horizonDays) || horizonDays <= 0) horizonDays = 14; if (horizonDays > 365) horizonDays = 365;
-    return { freq: 'daily', count, horizonDays, interval: 1, anchor: 'scheduled' };
+    return { freq: 'daily', count, horizonDays, interval: 1, anchor: 'scheduled', occurrenceOffsetDays: offsetDays };
   }
   if (mode === 'everyNScheduled' || mode === 'everyNCompleted') {
     const ivStr = (el<HTMLInputElement>('intervalDays').value || '').trim();
@@ -103,14 +140,14 @@ function buildRecurrenceFromUI(): any {
       const dhStr = (el<HTMLInputElement>('dailyHorizonDays').value || '').trim();
       let h = dhStr ? Number(dhStr) : 14; if (!isFinite(h) || h <= 0) h = 14; if (h > 365) h = 365; horizonDays = h;
     }
-    return { freq: 'daily', count, interval, anchor: (mode === 'everyNCompleted' ? 'completed' : 'scheduled'), horizonDays };
+    return { freq: 'daily', count, interval, anchor: (mode === 'everyNCompleted' ? 'completed' : 'scheduled'), horizonDays, occurrenceOffsetDays: offsetDays };
   }
   if (mode === 'weekly') {
     const boxes = Array.from(el<HTMLDivElement>('weeklyDows').querySelectorAll('input[type="checkbox"]')) as HTMLInputElement[];
     const dows: number[] = [];
     boxes.forEach(b => { if (b.checked) dows.push(Number(b.value)); });
     const weeklyDows = weeklyMaskFromArray(dows);
-    return { freq: 'weekly', weeklyDows, interval: 1, count };
+    return { freq: 'weekly', weeklyDows, interval: 1, count, occurrenceOffsetDays: offsetDays };
   }
   if (mode === 'monthly') {
     let mdNum: number | null = null;
@@ -120,17 +157,17 @@ function buildRecurrenceFromUI(): any {
       const sd = (el<HTMLInputElement>('startDate').value || '').trim();
       if (/^\d{4}-\d{2}-\d{2}$/.test(sd)) { const n = Number(sd.slice(8,10)); if (!isNaN(n) && n >= 1 && n <= 31) mdNum = n; }
     }
-    return { freq: 'monthly', monthlyDay: mdNum ?? 1, count };
+    return { freq: 'monthly', monthlyDay: mdNum ?? 1, count, occurrenceOffsetDays: offsetDays };
   }
   if (mode === 'monthlyNth') {
     const nth = Number((el<HTMLSelectElement>('monthlyNth').value || '1'));
     const dow = Number((el<HTMLSelectElement>('monthlyNthDow').value || '0'));
-    return { freq: 'monthlyNth', monthlyNth: nth, monthlyNthDow: dow, count };
+    return { freq: 'monthlyNth', monthlyNth: nth, monthlyNthDow: dow, count, occurrenceOffsetDays: offsetDays };
   }
   if (mode === 'yearly') {
     const month = Number((el<HTMLSelectElement>('yearlyMonth').value || '1'));
     const day = Number((el<HTMLInputElement>('yearlyDay').value || '1'));
-    return { freq: 'yearly', yearlyMonth: month, yearlyDay: day, count };
+    return { freq: 'yearly', yearlyMonth: month, yearlyDay: day, count, occurrenceOffsetDays: offsetDays };
   }
   return null;
 }
@@ -455,6 +492,9 @@ function captureFormSnapshot(): TaskRow {
   const recurrence = buildRecurrenceFromUI();
   const tags = getSelectedTags();
   const requireCommentEl = document.getElementById('requireCompleteComment') as HTMLInputElement | null;
+  const offsetDays = recurrence && typeof (recurrence as any).occurrenceOffsetDays === 'number'
+    ? Number((recurrence as any).occurrenceOffsetDays)
+    : 0;
   const snapshot: any = {
     TITLE: el<HTMLInputElement>('title').value.trim(),
     DESCRIPTION: el<HTMLTextAreaElement>('description').value.trim() || null,
@@ -464,7 +504,8 @@ function captureFormSnapshot(): TaskRow {
     START_TIME: el<HTMLInputElement>('startTime').value || null,
     IS_RECURRING: mode === 'once' ? 0 : 1,
     REQUIRE_COMPLETE_COMMENT: requireCommentEl && requireCommentEl.checked ? 1 : 0,
-    MANUAL_NEXT_DUE: 0
+    MANUAL_NEXT_DUE: 0,
+    OCCURRENCE_OFFSET_DAYS: offsetDays
   };
 
   if (!snapshot.START_DATE) snapshot.START_DATE = null;
@@ -483,6 +524,7 @@ function captureFormSnapshot(): TaskRow {
     snapshot.YEARLY_MONTH = null;
     snapshot.WEEKLY_DOWS = null;
     snapshot.MANUAL_NEXT_DUE = 0;
+    snapshot.OCCURRENCE_OFFSET_DAYS = 0;
   } else if (recurrence && (recurrence as any).manualNextDue) {
     snapshot.FREQ = 'monthly';
     snapshot.COUNT = 0;
@@ -495,11 +537,13 @@ function captureFormSnapshot(): TaskRow {
     snapshot.YEARLY_MONTH = null;
     snapshot.WEEKLY_DOWS = null;
     snapshot.MANUAL_NEXT_DUE = 1;
+    snapshot.OCCURRENCE_OFFSET_DAYS = 0;
   } else if (recurrence) {
     let count = Number((recurrence as any).count || 0);
     if (!Number.isFinite(count) || count < 0) count = 0;
     snapshot.COUNT = count;
     const freq = String((recurrence as any).freq || '').toLowerCase();
+    snapshot.OCCURRENCE_OFFSET_DAYS = Number((recurrence as any).occurrenceOffsetDays || 0);
     if (freq === 'daily') {
       snapshot.FREQ = 'daily';
       snapshot.INTERVAL = Math.max(1, Number((recurrence as any).interval || 1));
@@ -594,11 +638,17 @@ function computeTargetDates(rec: any, startDateStr: string | null, options: { ra
     if (rangeInfo.to && ds > rangeInfo.to!) return;
     res.push(ds);
   };
+  const offsetDays = Number(rec && typeof rec.occurrenceOffsetDays !== 'undefined' ? rec.occurrenceOffsetDays : 0) || 0;
+  const addWithOffset = (base: Date) => {
+    const shifted = new Date(base);
+    if (offsetDays !== 0) shifted.setDate(shifted.getDate() + offsetDays);
+    addIfInRange(shifted);
+  };
 
   const isManual = !!(rec && (rec.manualNextDue || rec.freq === 'manualNext'));
 
   if (!rec || rec.freq === 'once' || isManual) {
-    if (startDateStr) addIfInRange(startDate);
+    if (startDateStr) addWithOffset(startDate);
     return res;
   }
 
@@ -610,19 +660,19 @@ function computeTargetDates(rec: any, startDateStr: string | null, options: { ra
       for (let i = 0; i < count; i++) {
         const d = new Date(startDate);
         d.setDate(startDate.getDate() + i * interval);
-        addIfInRange(d);
+        addWithOffset(d);
       }
       return res;
     }
     if (anchor === 'completed') {
       // 新規作成（まだオカレンスが存在しない）場合は開始日で1件を想定
       if (options.isNew) {
-        if (startDateStr) addIfInRange(startDate);
+        if (startDateStr) addWithOffset(startDate);
         return res;
       }
       // 既存の場合は次回想定（概算）を1件だけ表示（完了基準）
       const d = new Date(today); d.setDate(d.getDate() + interval);
-      addIfInRange(d);
+      addWithOffset(d);
       return res;
     }
     // infinite windowed
@@ -630,7 +680,7 @@ function computeTargetDates(rec: any, startDateStr: string | null, options: { ra
     for (let i = 0; i < horizon; i++) {
       const d = new Date(today); d.setDate(today.getDate() + i);
       const diffDays = Math.floor((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate()).getTime())/(1000*60*60*24));
-      if (diffDays >= 0 && diffDays % interval === 0) addIfInRange(d);
+      if (diffDays >= 0 && diffDays % interval === 0) addWithOffset(d);
     }
     return res;
   }
@@ -649,7 +699,7 @@ function computeTargetDates(rec: any, startDateStr: string | null, options: { ra
           if (!(mask & (1 << dow))) continue;
           const d = new Date(weekStart); d.setDate(weekStart.getDate() + dow);
           if (d < start0) continue;
-          addIfInRange(d); produced++;
+          addWithOffset(d); produced++;
         }
       }
       return res;
@@ -667,7 +717,7 @@ function computeTargetDates(rec: any, startDateStr: string | null, options: { ra
         const relWeeks = Math.floor((weekStart.getTime() - startSunday.getTime())/(1000*60*60*24*7));
         if (relWeeks % interval !== 0) continue;
         if (d < start0) continue;
-        addIfInRange(d);
+        addWithOffset(d);
       }
     }
     return res;
@@ -682,7 +732,7 @@ function computeTargetDates(rec: any, startDateStr: string | null, options: { ra
         const y = startDate.getFullYear() + Math.floor((startDate.getMonth() + i)/12);
         const dStr = clampMonthlyDate(y, m0, md);
         const d = new Date(dStr);
-        if (d >= startDate) addIfInRange(d);
+        if (d >= startDate) addWithOffset(d);
         i++;
       }
       return res;
@@ -691,7 +741,7 @@ function computeTargetDates(rec: any, startDateStr: string | null, options: { ra
     const now = new Date(); const startYear = now.getFullYear(); const startMonth0 = now.getMonth();
     for (let i = 0; i < monthsAhead; i++) {
       const m0 = (startMonth0 + i) % 12; const y = startYear + Math.floor((startMonth0 + i)/12);
-      const dStr = clampMonthlyDate(y, m0, md); addIfInRange(new Date(dStr));
+      const dStr = clampMonthlyDate(y, m0, md); addWithOffset(new Date(dStr));
     }
     return res;
   }
@@ -703,7 +753,7 @@ function computeTargetDates(rec: any, startDateStr: string | null, options: { ra
       let i = 0; while (res.length < count) {
         const m0 = (startDate.getMonth() + i) % 12; const y = startDate.getFullYear() + Math.floor((startDate.getMonth() + i)/12);
         const dStr = nthWeekdayOfMonth(y, m0, nth, dow); const d = new Date(dStr);
-        if (d >= startDate) addIfInRange(d); i++;
+        if (d >= startDate) addWithOffset(d); i++;
       }
       return res;
     }
@@ -711,7 +761,7 @@ function computeTargetDates(rec: any, startDateStr: string | null, options: { ra
     const now = new Date(); const startYear = now.getFullYear(); const startMonth0 = now.getMonth();
     for (let i = 0; i < monthsAhead; i++) {
       const m0 = (startMonth0 + i) % 12; const y = startYear + Math.floor((startMonth0 + i)/12);
-      const dStr = nthWeekdayOfMonth(y, m0, nth, dow); addIfInRange(new Date(dStr));
+      const dStr = nthWeekdayOfMonth(y, m0, nth, dow); addWithOffset(new Date(dStr));
     }
     return res;
   }
@@ -722,21 +772,24 @@ function computeTargetDates(rec: any, startDateStr: string | null, options: { ra
     const count = Number(rec.count || 0);
     if (count >= 1) {
       let y = startDate.getFullYear();
-      let dStr = clampMonthlyDate(y, month-1, day);
-      if (new Date(dStr) < startDate) { y += 1; dStr = clampMonthlyDate(y, month-1, day); }
-      while (res.length < count) {
-        res.push(dStr); y += 1; dStr = clampMonthlyDate(y, month-1, day);
+      let candidate = clampMonthlyDate(y, month - 1, day);
+      if (new Date(candidate) < startDate) {
+        y += 1;
+        candidate = clampMonthlyDate(y, month - 1, day);
       }
-      // filter by range
-      return res.filter(s => {
-        const d = new Date(s); const r = getPreviewWindow(options.range);
-        return (!r.from || s >= r.from) && (!r.to || s <= r.to);
-      });
+      let produced = 0;
+      while (produced < count) {
+        addWithOffset(new Date(candidate));
+        produced += 1;
+        y += 1;
+        candidate = clampMonthlyDate(y, month - 1, day);
+      }
+      return res;
     }
     const yearsAhead = getPreviewWindow(options.range).yearsAhead ?? 2;
     const now = new Date(); const startYear = now.getFullYear();
     for (let i = 0; i < yearsAhead; i++) {
-      const y = startYear + i; const dStr = clampMonthlyDate(y, month-1, day); addIfInRange(new Date(dStr));
+      const y = startYear + i; const dStr = clampMonthlyDate(y, month-1, day); addWithOffset(new Date(dStr));
     }
     return res;
   }
@@ -800,6 +853,7 @@ function updateRecurrenceVisibility(mode: RecurrenceUIMode): void {
   setRowVisibleById('rowMonthlyNth', showMonthlyNth);
   setRowVisibleById('rowYearlyMonth', showYearly);
   setRowVisibleById('rowYearlyDay', showYearly);
+  setRowVisibleById('rowOccurrenceOffset', !(showOnce || showManual));
 
   // Recurrence count: visible for any recurring pattern except 'once'
   setRowVisibleByInput('recurrenceCount', !(showOnce || showManual));
@@ -900,6 +954,7 @@ function populateForm(t: TaskRow): void {
   el<HTMLSelectElement>('yearlyMonth').value = (t as any).YEARLY_MONTH != null ? String((t as any).YEARLY_MONTH) : String(new Date().getMonth()+1);
   el<HTMLInputElement>('yearlyDay').value = t.MONTHLY_DAY ? String(t.MONTHLY_DAY) : String(new Date().getDate());
   el<HTMLInputElement>('recurrenceCount').value = String((t.IS_RECURRING ? (t.COUNT ?? 0) : 1));
+  setOccurrenceOffsetDays((t as any).OCCURRENCE_OFFSET_DAYS ?? 0);
   // 完了時コメント
   const cb = document.getElementById('requireCompleteComment') as HTMLInputElement | null;
   if (cb) cb.checked = !!(t as any).REQUIRE_COMPLETE_COMMENT;

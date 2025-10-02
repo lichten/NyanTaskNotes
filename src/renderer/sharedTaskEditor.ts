@@ -21,6 +21,7 @@ export type TaskRow = {
   HORIZON_DAYS?: number | null;
   WEEKLY_DOWS?: number | null;
   MANUAL_NEXT_DUE?: number | null;
+  OCCURRENCE_OFFSET_DAYS?: number | null;
 };
 
 export type RecurrenceUIMode =

@@ -94,6 +94,17 @@
             </select>
           </div>
           <div class="row"><label for="startDate">開始日</label><input id="startDate" type="date" /></div>
+          <div class="row" id="rowOccurrenceOffset">
+            <label for="occurrenceOffsetValue">発生日のずらし</label>
+            <div style="flex:1; display:flex; gap:8px; align-items:center;">
+              <input id="occurrenceOffsetValue" type="number" min="0" max="365" placeholder="0" style="flex:0 0 80px;" />
+              <select id="occurrenceOffsetDirection" style="flex:0 0 120px;">
+                <option value="before">日前</option>
+                <option value="after">日後</option>
+              </select>
+              <span style="font-size:12px; color:#666;">基準となる開始日から前後に調整します</span>
+            </div>
+          </div>
           <div class="row"><label for="startTime">開始時刻</label><input id="startTime" type="time" /></div>
           <div class="row" id="rowInterval"><label for="intervalDays">間隔（日）</label><input id="intervalDays" type="number" min="1" max="365" placeholder="例: 2" /></div>
           <div class="row" id="rowHorizon"><label for="dailyHorizonDays">生成日数（日次・発生基準）</label><input id="dailyHorizonDays" type="number" min="1" max="365" placeholder="例: 14" /></div>
