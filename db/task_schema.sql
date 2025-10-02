@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS "RECURRENCE_RULES" (
   "COUNT" INTEGER,
   -- 完了時に次期日を手動指定するモード
   "MANUAL_NEXT_DUE" INTEGER NOT NULL DEFAULT 0,
+  -- 発生日を基準日からずらす日数（負数で前倒し）
+  "OCCURRENCE_OFFSET_DAYS" INTEGER NOT NULL DEFAULT 0,
   -- 日次の生成ウィンドウ（日数）。daily のみで使用。既定14日。
   "HORIZON_DAYS" INTEGER DEFAULT 14,
   -- 週次用: 曜日ビットマスク（bit0=日〜bit6=土）

@@ -19,6 +19,7 @@
     COUNT?: number | null;
     HORIZON_DAYS?: number | null;
     WEEKLY_DOWS?: number | null;
+    OCCURRENCE_OFFSET_DAYS?: number | null;
   };
 
   async function loadSettings() {

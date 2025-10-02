@@ -12,6 +12,7 @@ type Task = {
   FREQ?: string | null;
   MONTHLY_DAY?: number | null;
   MANUAL_NEXT_DUE?: number | null;
+  OCCURRENCE_OFFSET_DAYS?: number | null;
 };
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;

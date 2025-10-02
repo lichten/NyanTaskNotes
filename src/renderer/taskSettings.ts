@@ -16,10 +16,11 @@
     MONTHLY_NTH_DOW?: number | null;
     YEARLY_MONTH?: number | null;
     COUNT?: number | null;
-    HORIZON_DAYS?: number | null;
+   HORIZON_DAYS?: number | null;
     WEEKLY_DOWS?: number | null;
     MANUAL_NEXT_DUE?: number | null;
     REQUIRE_COMPLETE_COMMENT?: number | null;
+    OCCURRENCE_OFFSET_DAYS?: number | null;
   };
 
   type Filters = {
