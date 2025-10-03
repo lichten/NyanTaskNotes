@@ -239,6 +239,9 @@ export class TaskDatabase {
     return rounded;
   }
 
+  private static readonly MONTHLY_OCCURRENCE_CAP = 240;
+  private static readonly YEARLY_OCCURRENCE_CAP = 200;
+
   private async ensureRecurringMonthlyOccurrences(monthsAhead: number = 2): Promise<void> {
     // COUNT=0: 現在月〜先N-1ヶ月を生成。COUNT>=1: START_DATE から回数分の月次日付を生成（不足のみ追加）。
     const now = new Date();
@@ -261,7 +264,7 @@ export class TaskDatabase {
         const anchorDateStr = this.occurrenceAnchorDate(t.START_DATE ?? null, offsetDays) ?? (t.START_DATE ?? null);
         const startDate = new Date(t.START_DATE as string);
         let i = 0;
-        while (i < count * 2 && i < 240) { // safety cap
+        while (i < count * 2 && i < TaskDatabase.MONTHLY_OCCURRENCE_CAP) { // safety cap
           const m0 = (startDate.getMonth() + i) % 12;
           const y = startDate.getFullYear() + Math.floor((startDate.getMonth() + i) / 12);
           const baseDateStr = this.clampMonthlyDate(y, m0, monthlyDay);
@@ -328,7 +331,7 @@ export class TaskDatabase {
         if (!t.START_DATE) continue;
         const startDate = new Date(t.START_DATE as string);
         let i = 0;
-        while (i < count * 2 && i < 240) {
+        while (i < count * 2 && i < TaskDatabase.MONTHLY_OCCURRENCE_CAP) {
           const m0 = (startDate.getMonth() + i) % 12;
           const y = startDate.getFullYear() + Math.floor((startDate.getMonth() + i) / 12);
           const baseDateStr = this.nthWeekdayOfMonth(y, m0, nth, dow);
@@ -401,7 +404,7 @@ export class TaskDatabase {
           baseScheduled = this.clampMonthlyDate(y, month - 1, day);
         }
         let produced = 0;
-        while (produced < count && produced < 200) {
+        while (produced < count && produced < TaskDatabase.YEARLY_OCCURRENCE_CAP) {
           const base = produced === 0 ? baseScheduled : this.clampMonthlyDate(y + produced, month - 1, day);
           const scheduled = this.applyOccurrenceOffset(base, offsetDays);
           const exists = await this.get<any>(`SELECT ID FROM TASK_OCCURRENCES WHERE TASK_ID = ? AND SCHEDULED_DATE = ?`, [t.TASK_ID, scheduled]);
