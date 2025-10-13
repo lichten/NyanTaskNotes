@@ -31,7 +31,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Occurrences
   listOccurrences: (params?: any) => ipcRenderer.invoke('occ:list', params || {}),
   completeOccurrence: (id: number, options?: { comment?: string; completedAt?: string; manualNextDue?: string }) => ipcRenderer.invoke('occ:complete', id, options || {}),
-  deferOccurrence: (id: number, newDate?: string | null) => ipcRenderer.invoke('occ:defer', id, newDate ?? null)
+  deferOccurrence: (id: number, newDate?: string | null) => ipcRenderer.invoke('occ:defer', id, newDate ?? null),
+  prunePastOccurrences: (taskId: number) => ipcRenderer.invoke('occ:prune-past', taskId),
+  listOccurrencesByTask: (taskId: number) => ipcRenderer.invoke('occ:list-by-task', taskId),
+  setOccurrenceStatus: (occurrenceId: number, status: 'pending' | 'done') => ipcRenderer.invoke('occ:set-status', occurrenceId, status)
   ,
   // Task tags
   listTaskTags: () => ipcRenderer.invoke('task-tags:list'),
@@ -68,6 +71,9 @@ declare global {
       listOccurrences: (params?: any) => Promise<any[]>;
       completeOccurrence: (id: number, options?: { comment?: string; completedAt?: string; manualNextDue?: string }) => Promise<{ success: boolean }>;
       deferOccurrence: (id: number, newDate?: string | null) => Promise<{ success: boolean }>;
+      prunePastOccurrences: (taskId: number) => Promise<{ success: boolean; removed?: number; keptOccurrenceId?: number | null; totalMatched?: number; skippedManualNext?: boolean; message?: string }>;
+      listOccurrencesByTask: (taskId: number) => Promise<{ success: boolean; records?: Array<{ occurrenceId: number; taskId: number; status: string; scheduledDate: string | null; scheduledTime: string | null; deferredDate: string | null; completedAt: string | null; createdAt: string | null; updatedAt: string | null }>; message?: string }>;
+      setOccurrenceStatus: (occurrenceId: number, status: 'pending' | 'done') => Promise<{ success: boolean; message?: string }>;
       listTaskTags: () => Promise<string[]>;
       listTaskTagInfos: () => Promise<Array<{ id: number; name: string; createdAt: string | null; updatedAt: string | null }>>;
       renameTaskTag: (id: number, name: string) => Promise<{ success: boolean; message?: string }>;

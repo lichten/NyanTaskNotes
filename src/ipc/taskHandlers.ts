@@ -127,6 +127,42 @@ export function registerTaskIpcHandlers(opts: {
     }
   });
 
+  ipcMain.handle('occ:prune-past', async (_event, taskId: number) => {
+    const db = getTaskDb();
+    if (!db) return { success: false, message: 'タスクDBが初期化されていません' };
+    try {
+      const result = await (db as any).prunePastOccurrences(taskId);
+      return { success: true, ...result };
+    } catch (e: any) {
+      log.error('occ:prune-past error', e);
+      return { success: false, message: e?.message || '古いオカレンスの整理に失敗しました' };
+    }
+  });
+
+  ipcMain.handle('occ:list-by-task', async (_event, taskId: number) => {
+    const db = getTaskDb();
+    if (!db) return { success: false, message: 'タスクDBが初期化されていません' };
+    try {
+      const records = await (db as any).listOccurrencesByTask(taskId);
+      return { success: true, records };
+    } catch (e: any) {
+      log.error('occ:list-by-task error', e);
+      return { success: false, message: e?.message || 'オカレンスの取得に失敗しました' };
+    }
+  });
+
+  ipcMain.handle('occ:set-status', async (_event, occurrenceId: number, status: 'pending' | 'done') => {
+    const db = getTaskDb();
+    if (!db) return { success: false, message: 'タスクDBが初期化されていません' };
+    try {
+      await (db as any).setOccurrenceStatus(occurrenceId, status);
+      return { success: true };
+    } catch (e: any) {
+      log.error('occ:set-status error', e);
+      return { success: false, message: e?.message || 'ステータスの更新に失敗しました' };
+    }
+  });
+
   // Task tag helpers
   ipcMain.handle('task-tags:list', async () => {
     const db = getTaskDb();

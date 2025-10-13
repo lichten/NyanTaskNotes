@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data:;" />
+    <title>オカレンス編集 - NyanTaskNotes</title>
+    <style>
+      body { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; margin: 24px; color: #222; }
+      h1 { margin-bottom: 16px; }
+      .task-header { margin-bottom: 16px; display: flex; flex-direction: column; gap: 6px; }
+      .task-header .title { font-size: 20px; font-weight: 600; }
+      .task-header .meta { font-size: 13px; color: #555; display: flex; gap: 12px; flex-wrap: wrap; }
+      .controls { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; }
+      button { padding: 8px 14px; font-size: 14px; cursor: pointer; }
+      .status-badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; color: #fff; }
+      .status-pending { background: #4b8bf5; }
+      .status-done { background: #2f9b57; }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th, td { border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }
+      th { background: #f6f7fb; }
+      tbody tr:nth-of-type(even) { background-color: #fafbfd; }
+      .empty { color: #666; font-size: 14px; margin-top: 12px; }
+      .error { color: #c0392b; font-size: 14px; margin-top: 12px; }
+      @media (max-width: 768px) {
+        table { font-size: 12px; }
+        th, td { padding: 6px; }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>オカレンス編集</h1>
+    <section class="task-header" id="taskHeader" aria-live="polite">
+      <div class="title" id="taskTitle">タスク情報を読み込み中...</div>
+      <div class="meta" id="taskMeta"></div>
+    </section>
+    <div class="controls">
+      <button id="refreshButton" type="button">再読み込み</button>
+      <span id="statusMessage" style="font-size:13px;color:#555;"></span>
+    </div>
+    <div id="tableWrapper" aria-live="polite">
+      <table aria-label="タスクのオカレンス一覧">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>予定日</th>
+            <th>予定時刻</th>
+            <th>延期後日付</th>
+            <th>状態</th>
+            <th>完了日時</th>
+            <th>作成日時</th>
+            <th>更新日時</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="occurrenceTableBody"></tbody>
+      </table>
+      <div class="empty" id="emptyMessage" style="display:none;">オカレンスが見つかりません。</div>
+      <div class="error" id="errorMessage" style="display:none;"></div>
+    </div>
+    <script src="js/taskOccurrenceEditor.js"></script>
+  </body>
+</html>
