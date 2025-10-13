@@ -713,6 +713,40 @@ async function loadTasks(): Promise<void> {
     const d = new Date(s);
     return new Date(d.getFullYear(), d.getMonth(), d.getDate());
   };
+  filteredOccs.forEach((o: any) => {
+    delete (o as any).__showPruneButton;
+    delete (o as any).__pruneCount;
+  });
+  const pastPendingByTask = new Map<number, { keep: any | null; keepTime: number; items: any[] }>();
+  for (const o of filteredOccs) {
+    if (Number((o as any).MANUAL_NEXT_DUE || 0) === 1) continue;
+    if (o.OCC_STATUS !== 'pending') continue;
+    const effectiveDateStr = getEffectiveDate(o);
+    if (!effectiveDateStr) continue;
+    const d = toDate(effectiveDateStr);
+    if (d >= todayStart) continue;
+    const taskId = Number(o.TASK_ID);
+    if (!Number.isFinite(taskId)) continue;
+    let info = pastPendingByTask.get(taskId);
+    if (!info) {
+      info = { keep: null, keepTime: Number.NEGATIVE_INFINITY, items: [] };
+      pastPendingByTask.set(taskId, info);
+    }
+    info.items.push(o);
+    const when = d.getTime();
+    const occId = Number(o.OCCURRENCE_ID || o.ID || 0);
+    const keepOccId = info.keep ? Number((info.keep as any).OCCURRENCE_ID || (info.keep as any).ID || 0) : 0;
+    if (!info.keep || when > info.keepTime || (when === info.keepTime && occId > keepOccId)) {
+      info.keep = o;
+      info.keepTime = when;
+    }
+  }
+  for (const info of pastPendingByTask.values()) {
+    if (!info.keep || info.items.length <= 1) continue;
+    const keepRef: any = info.keep;
+    keepRef.__showPruneButton = true;
+    keepRef.__pruneCount = info.items.length - 1;
+  }
   for (const o of filteredOccs) {
     const effectiveDateStr = getEffectiveDate(o);
     if (!effectiveDateStr) continue;
@@ -871,6 +905,40 @@ async function loadTasks(): Promise<void> {
             openDeferDialog(o);
           };
           actions.appendChild(deferBtn);
+
+          const pruneCount = Number((o as any).__pruneCount || 0);
+          if ((o as any).__showPruneButton && pruneCount > 0) {
+            const pruneBtn = document.createElement('button');
+            pruneBtn.textContent = pruneCount === 1 ? '最新だけ残す (1件削除)' : `最新だけ残す (${pruneCount}件削除)`;
+            pruneBtn.style.marginLeft = '8px';
+            pruneBtn.onclick = async () => {
+              const confirmText = pruneCount === 1
+                ? 'このタスクの過去のオカレンスを1件削除し、最新の1件だけを残します。実行しますか？'
+                : `このタスクの過去のオカレンスを${pruneCount}件削除し、最新の1件だけを残します。実行しますか？`;
+              if (!window.confirm(confirmText)) return;
+              pruneBtn.disabled = true;
+              try {
+                const result = await window.electronAPI.prunePastOccurrences(Number(o.TASK_ID));
+                if (!result || !result.success) {
+                  throw new Error(result?.message || '整理に失敗しました');
+                }
+                if (result.skippedManualNext) {
+                  window.alert('手動で次回期日を設定するタスクのため、整理はスキップされました。');
+                } else if (result.removed && result.removed > 0) {
+                  window.alert(`${result.removed}件のオカレンスを削除しました。`);
+                } else {
+                  window.alert('削除対象のオカレンスはありませんでした。');
+                }
+                await loadTasks();
+              } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                window.alert(`整理に失敗しました: ${message}`);
+              } finally {
+                pruneBtn.disabled = false;
+              }
+            };
+            actions.appendChild(pruneBtn);
+          }
         } else {
           btn.textContent = '完了済み';
           btn.disabled = true;

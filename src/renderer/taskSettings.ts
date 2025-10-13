@@ -344,6 +344,14 @@
           window.location.href = `task-editor2.html?id=${task.ID}`;
         };
         actions.appendChild(editBtn);
+        const occBtn = document.createElement('button');
+        occBtn.type = 'button';
+        occBtn.textContent = 'オカレンス編集';
+        occBtn.title = 'タスクのオカレンス編集画面を開く';
+        occBtn.onclick = () => {
+          window.location.href = `task-occurrence-editor.html?taskId=${task.ID}`;
+        };
+        actions.appendChild(occBtn);
         card.appendChild(actions);
       }
 

@@ -1095,6 +1095,167 @@ export class TaskDatabase {
     } catch {}
   }
 
+  async prunePastOccurrences(taskId: number): Promise<{ removed: number; keptOccurrenceId: number | null; totalMatched: number; skippedManualNext: boolean }> {
+    const normalizedTaskId = Number(taskId);
+    if (!Number.isFinite(normalizedTaskId) || normalizedTaskId <= 0) {
+      throw new Error('タスクIDが不正です');
+    }
+    const taskRow = await this.get<any>(
+      `SELECT T.ID, COALESCE(R.MANUAL_NEXT_DUE, 0) AS MANUAL_NEXT_DUE
+         FROM TASKS T
+         LEFT JOIN RECURRENCE_RULES R ON R.TASK_ID = T.ID
+        WHERE T.ID = ?`,
+      [normalizedTaskId]
+    );
+    if (!taskRow) {
+      return { removed: 0, keptOccurrenceId: null, totalMatched: 0, skippedManualNext: false };
+    }
+    const manualNextDue = Number(taskRow.MANUAL_NEXT_DUE || 0) === 1;
+    if (manualNextDue) {
+      return { removed: 0, keptOccurrenceId: null, totalMatched: 0, skippedManualNext: true };
+    }
+    const today = new Date();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const todayYmd = this.dateToYmd(todayStart);
+    const occRows = await this.all<{ ID: number; SCHEDULED_DATE: string | null; DEFERRED_DATE: string | null }>(
+      `SELECT ID, SCHEDULED_DATE, DEFERRED_DATE
+         FROM TASK_OCCURRENCES
+        WHERE TASK_ID = ?
+          AND STATUS = 'pending'`,
+      [normalizedTaskId]
+    );
+    type Candidate = { id: number; ymd: string };
+    const candidates: Candidate[] = [];
+    for (const row of occRows) {
+      const deferred = typeof row.DEFERRED_DATE === 'string' ? row.DEFERRED_DATE.trim() : '';
+      const scheduled = typeof row.SCHEDULED_DATE === 'string' ? row.SCHEDULED_DATE.trim() : '';
+      const effective = deferred || scheduled;
+      if (!effective) continue;
+      const id = Number(row.ID);
+      if (!Number.isFinite(id)) continue;
+      const parsed = this.parseDateOnlyStrict(effective);
+      if (!(parsed instanceof Date) || Number.isNaN(parsed.getTime())) continue;
+      const normalized = this.dateToYmd(new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()));
+      if (normalized >= todayYmd) continue;
+      candidates.push({ id, ymd: normalized });
+    }
+    if (candidates.length <= 1) {
+      const kept = candidates.length === 1 ? candidates[0].id : null;
+      return { removed: 0, keptOccurrenceId: kept, totalMatched: candidates.length, skippedManualNext: false };
+    }
+    candidates.sort((a, b) => {
+      const cmp = a.ymd.localeCompare(b.ymd);
+      if (cmp !== 0) return cmp;
+      return a.id - b.id;
+    });
+    const keep = candidates[candidates.length - 1];
+    const toRemove = candidates.slice(0, candidates.length - 1);
+    const removedIds = await this.withTransaction(async () => {
+      const removed: number[] = [];
+      for (const entry of toRemove) {
+        await this.run('DELETE FROM TASK_OCCURRENCES WHERE ID = ?', [entry.id]);
+        removed.push(entry.id);
+      }
+      return removed;
+    });
+    try {
+      await this.logEvent('occ.prune', 'user', normalizedTaskId, keep.id, {
+        keptOccurrenceId: keep.id,
+        removedOccurrenceIds: removedIds,
+        matched: candidates.length
+      });
+    } catch {}
+    return {
+      removed: removedIds.length,
+      keptOccurrenceId: keep.id ?? null,
+      totalMatched: candidates.length,
+      skippedManualNext: false
+    };
+  }
+
+  async listOccurrencesByTask(taskId: number): Promise<Array<{
+    occurrenceId: number;
+    taskId: number;
+    status: string;
+    scheduledDate: string | null;
+    scheduledTime: string | null;
+    deferredDate: string | null;
+    completedAt: string | null;
+    createdAt: string | null;
+    updatedAt: string | null;
+  }>> {
+    const normalizedTaskId = Number(taskId);
+    if (!Number.isFinite(normalizedTaskId) || normalizedTaskId <= 0) {
+      throw new Error('タスクIDが不正です');
+    }
+    const rows = await this.all<{
+      ID: number;
+      TASK_ID: number;
+      STATUS: string;
+      SCHEDULED_DATE: string | null;
+      SCHEDULED_TIME: string | null;
+      DEFERRED_DATE: string | null;
+      COMPLETED_AT: string | null;
+      CREATED_AT: string | null;
+      UPDATED_AT: string | null;
+    }>(
+      `SELECT ID, TASK_ID, STATUS, SCHEDULED_DATE, SCHEDULED_TIME, DEFERRED_DATE, COMPLETED_AT, CREATED_AT, UPDATED_AT
+         FROM TASK_OCCURRENCES
+        WHERE TASK_ID = ?
+        ORDER BY COALESCE(DEFERRED_DATE, SCHEDULED_DATE, '') ASC, ID ASC`,
+      [normalizedTaskId]
+    );
+    return rows.map(row => ({
+      occurrenceId: Number(row.ID),
+      taskId: Number(row.TASK_ID),
+      status: row.STATUS,
+      scheduledDate: row.SCHEDULED_DATE ?? null,
+      scheduledTime: row.SCHEDULED_TIME ?? null,
+      deferredDate: row.DEFERRED_DATE ?? null,
+      completedAt: row.COMPLETED_AT ?? null,
+      createdAt: row.CREATED_AT ?? null,
+      updatedAt: row.UPDATED_AT ?? null
+    }));
+  }
+
+  async setOccurrenceStatus(occurrenceId: number, status: 'pending' | 'done'): Promise<void> {
+    const normalizedId = Number(occurrenceId);
+    if (!Number.isFinite(normalizedId) || normalizedId <= 0) {
+      throw new Error('オカレンスIDが不正です');
+    }
+    if (status !== 'pending' && status !== 'done') {
+      throw new Error('ステータスは pending または done のみ指定できます');
+    }
+    const occ = await this.get<{
+      ID: number;
+      TASK_ID: number;
+      STATUS: string;
+      COMPLETED_AT: string | null;
+    }>(
+      `SELECT ID, TASK_ID, STATUS, COMPLETED_AT
+         FROM TASK_OCCURRENCES
+        WHERE ID = ?`,
+      [normalizedId]
+    );
+    if (!occ) throw new Error('指定されたオカレンスが見つかりません');
+    if (occ.STATUS === status) return;
+    const now = this.nowIso();
+    const completedAt = status === 'done' ? (occ.COMPLETED_AT ?? now) : null;
+    await this.run(
+      `UPDATE TASK_OCCURRENCES
+          SET STATUS = ?, COMPLETED_AT = ?, UPDATED_AT = ?
+        WHERE ID = ?`,
+      [status, completedAt, now, normalizedId]
+    );
+    try {
+      await this.logEvent('occ.admin.statusOverride', 'user', Number(occ.TASK_ID), normalizedId, {
+        previousStatus: occ.STATUS,
+        newStatus: status,
+        completedAt
+      });
+    } catch {}
+  }
+
   private get<T>(sql: string, params: any[] = []): Promise<T | undefined> {
     return new Promise((resolve, reject) => {
       if (!this.db) return reject(new Error('Database not initialized'));
