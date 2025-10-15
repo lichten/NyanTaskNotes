@@ -963,6 +963,7 @@ function populateForm(t: TaskRow): void {
   const boxes = Array.from(el<HTMLDivElement>('weeklyDows').querySelectorAll('input[type="checkbox"]')) as HTMLInputElement[];
   boxes.forEach(b => b.checked = false);
   if (wMask > 0) { weeklyArrayFromMask(wMask).forEach(i => { const f = boxes.find(b => Number(b.value)===i); if (f) f.checked = true; }); }
+  updateOccurrenceButtonState();
 }
 
 async function fetchOccurrencesInRange(taskId: number, range: string): Promise<OccurrenceView[]> {
@@ -974,6 +975,19 @@ async function fetchOccurrencesInRange(taskId: number, range: string): Promise<O
 function getDiffRange(): string {
   const select = document.getElementById('previewRange') as HTMLSelectElement | null;
   return select?.value || DEFAULT_DIFF_RANGE;
+}
+
+function updateOccurrenceButtonState(): void {
+  const btn = document.getElementById('occurrenceEditorBtn') as HTMLButtonElement | null;
+  if (!btn) return;
+  const hasId = !!(el<HTMLInputElement>('taskId').value);
+  btn.disabled = !hasId;
+}
+
+function openOccurrenceEditor(): void {
+  const idStr = el<HTMLInputElement>('taskId').value;
+  if (!idStr) return;
+  window.location.href = `task-occurrence-editor.html?taskId=${idStr}`;
 }
 
 async function onSave() {
@@ -1029,6 +1043,7 @@ async function onSave() {
       /* noop */
     }
   }
+  updateOccurrenceButtonState();
   await refreshLogs();
 }
 
@@ -1040,6 +1055,7 @@ async function onDelete() {
   // クリア
   populateForm({ TITLE: '', IS_RECURRING: 0 } as any);
   replaceAttachedFiles([]);
+  updateOccurrenceButtonState();
 }
 
 function onDuplicate(): void {
@@ -1065,6 +1081,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   await initializeTagControls();
   el<HTMLButtonElement>('saveBtn').addEventListener('click', onSave);
   el<HTMLButtonElement>('duplicateBtn').addEventListener('click', onDuplicate);
+  el<HTMLButtonElement>('occurrenceEditorBtn').addEventListener('click', openOccurrenceEditor);
   el<HTMLButtonElement>('deleteBtn').addEventListener('click', onDelete);
 
   // Recurrence mode change -> visibility sync
@@ -1091,6 +1108,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   });
 
   await loadInitial();
+  updateOccurrenceButtonState();
 });
 
 async function refreshLogs(): Promise<void> {
