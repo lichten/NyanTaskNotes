@@ -62,7 +62,7 @@ function createWindow(): void {
       preload: path.join(__dirname, 'preload.js')
     }
   });
-  mainWindow.loadFile('index.html');
+  mainWindow.loadFile('task-view.html');
   mainWindow.once('ready-to-show', () => {
     if (windowState.isMaximized) mainWindow!.maximize();
     mainWindow!.show();
